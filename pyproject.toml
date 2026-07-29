@@ -1,0 +1,35 @@
+[project]
+name = "getflightplan"
+version = "0.9.0"
+description = "Shared situational awareness for coding agents: declare work before it starts, see what's in flight, coordinate around conflicts, and debrief what happened."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["mcp", "coding-agents", "coordination", "claude-code", "codex"]
+# The MCP stdio client's runtime deps — the whole dependency surface of this
+# package. mcp<2: SDK 2.0 removes mcp.server.fastmcp.
+dependencies = [
+    "httpx>=0.27,<0.28",
+    "mcp>=1.2,<2",
+]
+
+[project.urls]
+Homepage = "https://getflightplan.com"
+Repository = "https://github.com/sledmonkey/getflightplan"
+
+[project.scripts]
+getflightplan = "flightplan.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flightplan"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
