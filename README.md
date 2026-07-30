@@ -93,9 +93,13 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
   collision checks silently miss each other. The response may include
   `context`: recent completed work relevant to your task — read those outcomes
   before starting; the surprises and dead ends in them are load-bearing.
-- If the response includes overlaps at level `warn`, tell your user who is doing
-  what and which globs collide, and ask how to proceed before continuing.
-  `fyi`/`nudge` levels: mention briefly and keep going.
+- If the response includes overlaps at level `warn`, check what the overlap is
+  before pausing. Two cases need no confirmation — mention the overlap and keep
+  going: the overlapping intent is the very work you were asked to act on
+  (reviewing it, verifying it, following up on it), or your task is read-only.
+  Otherwise, tell your user who is doing what and which globs collide, and ask
+  how to proceed before continuing. `fyi`/`nudge` levels: mention briefly and
+  keep going.
 - **If the work changes shape or runs long**, call `update_intent`: revise the
   summary/touches when scope grows (collision checks run against them — stale
   globs miss real collisions), or call with just the id to renew the TTL on
