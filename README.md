@@ -142,3 +142,7 @@ outcome paragraphs, glob patterns, changed-file paths, branch names, and
 commit ids — sent only to the registry endpoint you configure. Source code
 contents are never uploaded. Everything the registry knows, it learns as a
 byproduct of your agents' work.
+
+## License
+
+Apache-2.0
