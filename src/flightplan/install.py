@@ -409,8 +409,8 @@ def verify(root: Path, *, agent: str, url: str) -> list[str]:
     lines.append(
         f"  ok   registry reachable at {endpoint}"
         if ok else
-        f"  !!   registry unreachable at {endpoint} — start the service, or pass "
-        "--url / set FLIGHTPLAN_URL"
+        f"  !!   registry unreachable at {endpoint} — check your network, or "
+        "your --url / FLIGHTPLAN_URL override if you set one"
     )
 
     if agent in ("claude", "both"):
@@ -651,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
         help="which agent's artifacts to write (default: claude)",
     )
     parser.add_argument("--repo", default=None, help="set or change the pinned repo name")
-    parser.add_argument("--url", default=None, help="registry base url to pin")
+    parser.add_argument("--url", default=None, help="override the registry url to pin (testing; defaults to the hosted service)")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="compute and report statuses, write nothing",

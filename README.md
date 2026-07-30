@@ -10,73 +10,63 @@
 >
 > **A byproduct of agent work, not another process to maintain.**
 
-This is the FlightPlan client: a thin CLI (`getflightplan`), the MCP server
-your coding agent launches, and an install kit that wires a repo up in one
-idempotent command. The hosted service lives at
+FlightPlan coordinates coding agents before their work collides. This repo
+contains the CLI, MCP server, and installer for the hosted service at
 [getflightplan.com](https://getflightplan.com).
 
-## How it works
+## Quick start
 
-1. **File the work.** Before the first edit, your agent posts what it is about
-   to do: a one-paragraph summary and glob patterns for the areas it expects
-   to touch.
-2. **See what's in flight.** The response lists overlapping active work across
-   your own parallel sessions and your teammates' agents — including
-   uncommitted work Git cannot see — plus recent completed work relevant to
-   the task at hand.
-3. **Coordinate around conflicts.** Overlaps are advisory. The agent tells you
-   who is doing what; you decide whether to narrow, sequence, or proceed.
-4. **Debrief what happened.** On completion the agent records what actually
-   changed, what surprised it, and what it tried and rejected — context the
-   next session (yours or a teammate's) reads before starting.
-
-## Status
-
-The hosted service is in private beta — get on the list at
-[getflightplan.com](https://getflightplan.com). The package is not yet on
-PyPI; until then, install from source:
+From your repo's root:
 
 ```sh
 uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install
 ```
 
-After PyPI publication this becomes `uvx getflightplan install`.
+That installs FlightPlan for Claude Code. For Codex, append
+`--agent codex`. The command is safe to re-run.
 
-## Install
+The hosted service is in private beta; request access at
+[getflightplan.com](https://getflightplan.com). Until the package reaches
+PyPI, the command above installs directly from GitHub. After publication it
+becomes `uvx getflightplan install`.
 
-From your repo's root:
+## How it works
 
-```sh
-uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install                 # Claude Code
-uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install --agent codex   # Codex
-```
+1. **File the work.** Before editing, an agent declares its task and the files
+   it expects to touch.
+2. **See what's in flight.** FlightPlan returns overlapping active work,
+   including uncommitted changes Git cannot see, decisions made during coding,
+   plus relevant recent outcomes.
+3. **Coordinate.** Overlaps are advisory: narrow the work, sequence it, or
+   proceed with context.
+4. **Debrief.** The agent records what changed, what surprised it, and what it
+   tried so the next session does not start cold.
 
-One command per repo, safe to re-run. It writes:
+## What the installer adds
 
 - `.flightplan.toml` — pins the repo name every agent posts under, plus the
   registry URL. Committed on purpose; no secrets.
-- The agent snippet into `CLAUDE.md` (and/or `AGENTS.md`) between managed
-  markers — the behavioral contract your agent follows. Full text below.
+- A managed agent snippet in `CLAUDE.md` and/or `AGENTS.md`.
 - `/registry-digest` — an on-demand "what happened lately" command.
 - A session-end stop hook (`.claude/hooks/flightplan_stop_hook.py` plus its
   settings wiring) that reminds the agent to close out open intents.
 
-It then verifies MCP registration and registry reachability and offers to fix
-what's missing: prompt once for your API key, register the `flightplan` MCP
-server, done. Verification never fails the run — like everything here, it
-advises.
+It also checks MCP registration and service reachability, then offers to
+configure anything missing. Verification is advisory and never fails the run.
 
 ## Configuration
 
-- `FLIGHTPLAN_URL` — the registry endpoint (set in the MCP server's env).
+- `FLIGHTPLAN_URL` — `https://api.getflightplan.com`
 - `FLIGHTPLAN_API_KEY` — your key (the MCP server's env; the stop hook also
   reads `~/.config/flightplan/env`).
 - `.flightplan.toml` — the per-repo pin: `repo` name and `url`.
 
 ## What your agent is told
 
-The installer renders this snippet into your repo, with the repo name pinned.
-It is the entire behavioral contract — inspect it before you install it:
+The installer adds the following managed contract with your repo name pinned.
+
+<details>
+<summary>View the agent instructions</summary>
 
 ## Intent registry
 
@@ -139,11 +129,13 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
 - The registry is advisory and must never block work: if its tools error,
   proceed, and mention the failure to your user once.
 
+</details>
+
 ## Data
 
 What leaves your machine is the coordination record: intent summaries and
 outcome paragraphs, glob patterns, changed-file paths, branch names, and
-commit ids — sent only to the registry endpoint you configure. Source code
+commit ids — sent only to the FlightPlan service. Source code
 contents are never uploaded. Everything the registry knows, it learns as a
 byproduct of your agents' work.
 
