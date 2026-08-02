@@ -54,6 +54,10 @@ becomes `uvx getflightplan install`.
 It also checks MCP registration and service reachability, then offers to
 configure anything missing. Verification is advisory and never fails the run.
 
+To remove everything the installer wrote, run `getflightplan uninstall` from
+the repo root (`--dry-run` to preview, `--purge-key` to also delete the saved
+API key).
+
 ## Configuration
 
 - `FLIGHTPLAN_URL` — `https://api.getflightplan.com`

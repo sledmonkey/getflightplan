@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [unreleased]
 
+### Added
+- `getflightplan uninstall`: removes everything install wrote in a repo —
+  managed snippet blocks, `.flightplan.toml`, the `/registry-digest` command,
+  the stop hook and its settings wiring. `--dry-run` previews; `--purge-key`
+  also deletes the machine-level saved key; MCP deregistration is offered
+  interactively (default no — registrations are machine-wide).
 ### Changed
 - Snippet warn rule softened: when an overlap is the very work the agent was
   asked to act on, or the task is read-only, the agent mentions it and keeps
