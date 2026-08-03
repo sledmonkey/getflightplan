@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the stop hook and its settings wiring. `--dry-run` previews; `--purge-key`
   also deletes the machine-level saved key; MCP deregistration is offered
   interactively (default no — registrations are machine-wide).
+- Trust docs: `SECURITY.md` (private reporting via security@getflightplan.com
+  or GitHub advisories) and `docs/data-flow.md` (what leaves your machine,
+  what never does, and what is stored where).
 ### Changed
 - Snippet warn rule softened: when an overlap is the very work the agent was
   asked to act on, or the task is read-only, the agent mentions it and keeps

@@ -143,6 +143,10 @@ commit ids — sent only to the FlightPlan service. Source code
 contents are never uploaded. Everything the registry knows, it learns as a
 byproduct of your agents' work.
 
+The details — what never leaves, and what is stored where — are in
+[docs/data-flow.md](docs/data-flow.md). Vulnerability reporting:
+[SECURITY.md](SECURITY.md).
+
 ## License
 
 Apache-2.0
