@@ -358,10 +358,26 @@ def test_claude_registration_uses_package_source(tmp_path, monkeypatch):
     adds = _mcp_adds(calls)
     assert [c[0] for c in adds] == ["claude"]
     cmd = adds[0]
-    i = cmd.index("--from")
-    assert cmd[i + 1] == install.PACKAGE_SOURCE          # never the bare PyPI name
+    # Published package: bare `uvx getflightplan mcp`, no redundant --from.
+    assert cmd[-3:] == ["uvx", "getflightplan", "mcp"]
+    assert "--from" not in cmd
     assert f"FLIGHTPLAN_URL={install.DEFAULT_URL}" in cmd
     assert f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in cmd
+
+
+def test_custom_source_keeps_from(tmp_path, monkeypatch):
+    # A development source still needs `uvx --from`.
+    _onboard_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL, "--source", "/src/local"]) == 0
+    cmd = _mcp_adds(calls)[0]
+    assert cmd[-5:] == ["uvx", "--from", "/src/local", "getflightplan", "mcp"]
 
 
 def test_codex_registration_uses_package_source(tmp_path, monkeypatch):
@@ -377,8 +393,8 @@ def test_codex_registration_uses_package_source(tmp_path, monkeypatch):
     adds = _mcp_adds(calls)
     assert [c[0] for c in adds] == ["codex"]
     cmd = adds[0]
-    i = cmd.index("--from")
-    assert cmd[i + 1] == install.PACKAGE_SOURCE
+    assert cmd[-3:] == ["uvx", "getflightplan", "mcp"]
+    assert "--from" not in cmd
     assert f"FLIGHTPLAN_URL={install.DEFAULT_URL}" in cmd
 
 
@@ -422,17 +438,19 @@ def test_agent_both_prompts_for_key_once_and_registers_both(tmp_path, monkeypatc
     assert [c[0] for c in _mcp_adds(calls)] == ["claude", "codex"]
 
 
-def test_pre_publish_guidance_never_bare_uvx(tmp_path, monkeypatch):
-    # Until PyPI publication, every emitted uvx line must carry --from; the
-    # bare `uvx getflightplan` form would 404 for a stranger.
+def test_published_guidance_uses_bare_uvx(tmp_path, monkeypatch):
+    # Published: every emitted uvx line is the bare package form, and the
+    # pre-publish git URL is gone.
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _offline(monkeypatch)
     text = "\n".join(install.verify(tmp_path, agent="both", url=install.DEFAULT_URL))
-    text += install._CLAUDE_REGISTER_GUIDANCE + install._CODEX_REGISTER_GUIDANCE
-    assert "uvx getflightplan" not in text
-    assert install.PACKAGE_SOURCE in text
+    text += install._claude_guidance() + install._codex_guidance()
+    assert "uvx getflightplan" in text
+    assert "git+https" not in text
+    assert "--from" not in text
+    assert install.PACKAGE_SOURCE == "getflightplan"
 
 
 def test_reverify_after_registration(tmp_path, monkeypatch, capsys):
@@ -449,6 +467,317 @@ def test_reverify_after_registration(tmp_path, monkeypatch, capsys):
     assert "registered  flightplan MCP server (claude)" in out
     assert "re-verify:" in out
     assert "start a new agent session" in out
+
+
+# --- Stale-registration healing ---
+
+# What a pre-publish install left behind: the right name, the wrong source.
+_OLD_SOURCE = "git+https://github.com/sledmonkey/getflightplan"
+_STALE_CLAUDE = {
+    "mcpServers": {
+        "flightplan": {
+            "command": "uvx",
+            "args": ["--from", _OLD_SOURCE, "getflightplan", "mcp"],
+        }
+    }
+}
+
+
+def test_stale_claude_registration_is_reregistered(tmp_path, monkeypatch, capsys):
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    (home / ".claude.json").write_text(json.dumps(_STALE_CLAUDE))
+    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")  # confirm
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    out = capsys.readouterr().out
+    assert _OLD_SOURCE in out              # says what it points at
+    assert "uvx getflightplan mcp" in out  # and what it should point at
+
+    # The old entry is dropped before the new one is added.
+    assert ["claude", "mcp", "remove", "flightplan", "--scope", "user"] in calls
+    cmd = _mcp_adds(calls)[0]
+    assert cmd[-3:] == ["uvx", "getflightplan", "mcp"]
+
+
+def test_stale_claude_with_no_input_reports_only(tmp_path, monkeypatch, capsys):
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    before = json.dumps(_STALE_CLAUDE)
+    (home / ".claude.json").write_text(before)
+
+    def boom(*a, **k):
+        raise AssertionError("must not prompt")
+
+    monkeypatch.setattr(install.getpass, "getpass", boom)
+    monkeypatch.setattr("builtins.input", boom)
+
+    assert install.main(["--no-input", "--url", install.DEFAULT_URL]) == 0
+    out = capsys.readouterr().out
+    assert _OLD_SOURCE in out
+    assert "claude mcp add flightplan" in out          # the manual command instead
+    assert (home / ".claude.json").read_text() == before  # nothing changed
+
+
+def test_dry_run_prints_the_would_be_fix(tmp_path, monkeypatch, capsys):
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    before = json.dumps(_STALE_CLAUDE)
+    (home / ".claude.json").write_text(before)
+
+    def boom(*a, **k):
+        raise AssertionError("must not prompt on a dry run")
+
+    monkeypatch.setattr(install.getpass, "getpass", boom)
+    monkeypatch.setattr("builtins.input", boom)
+
+    assert install.main(["--dry-run", "--url", install.DEFAULT_URL]) == 0
+    out = capsys.readouterr().out
+    assert "(dry run)" in out
+    assert _OLD_SOURCE in out
+    assert "uvx getflightplan mcp" in out
+    assert (home / ".claude.json").read_text() == before
+
+
+def test_custom_source_defines_current(tmp_path, monkeypatch):
+    # With --source X, "current" means the registration runs X.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".claude.json").write_text(json.dumps({
+        "mcpServers": {
+            "flightplan": {
+                "command": "uvx",
+                "args": ["--from", "/src/local", "getflightplan", "mcp"],
+                "env": {"FLIGHTPLAN_URL": install.DEFAULT_URL},
+            }
+        }
+    }))
+    url = install.DEFAULT_URL
+    assert install._claude_registration(
+        tmp_path, "/src/local", url).status == install.CURRENT
+    assert install._claude_registration(
+        tmp_path, "getflightplan", url).status == install.STALE
+
+
+def _codex_config(home: Path, text: str) -> None:
+    (home / ".codex").mkdir(parents=True, exist_ok=True)
+    (home / ".codex" / "config.toml").write_text(text)
+
+
+def test_codex_stale_source_detected(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _codex_config(home, (
+        "[mcp_servers.flightplan]\n"
+        'command = "uvx"\n'
+        f'args = ["--from", "{_OLD_SOURCE}", "getflightplan", "mcp"]\n'
+    ))
+    _offline(monkeypatch)
+
+    reg = install._codex_registration(install.PACKAGE_SOURCE, install.DEFAULT_URL)
+    assert reg.status == install.STALE
+    assert _OLD_SOURCE in reg.detail
+
+    text = "\n".join(install.verify(tmp_path, agent="codex", url=install.DEFAULT_URL))
+    assert "registered but" in text
+    assert "not found" not in text
+
+
+def test_codex_current_source_is_ok(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _codex_config(home, (
+        "[mcp_servers.flightplan]\n"
+        'command = "uvx"\n'
+        'args = ["getflightplan", "mcp"]\n'
+        f'env = {{ FLIGHTPLAN_URL = "{install.DEFAULT_URL}" }}\n'
+    ))
+    reg = install._codex_registration(install.PACKAGE_SOURCE, install.DEFAULT_URL)
+    assert reg.status == install.CURRENT
+
+
+def test_codex_unrelated_mention_is_not_registered(tmp_path, monkeypatch):
+    # The old substring check called this registered. It is not.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _codex_config(home, (
+        "[mcp_servers.other]\n"
+        'command = "uvx"\n'
+        'args = ["other-server"]\n'
+        'env = { FLIGHTPLAN_URL = "https://api.getflightplan.com" }\n'
+    ))
+    reg = install._codex_registration(install.PACKAGE_SOURCE, install.DEFAULT_URL)
+    assert reg.status == install.MISSING
+
+
+def test_codex_unparseable_toml_does_not_crash(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _offline(monkeypatch)
+    _codex_config(home, "[mcp_servers.flightplan\ncommand = uvx ]]]\n")
+
+    reg = install._codex_registration(install.PACKAGE_SOURCE, install.DEFAULT_URL)
+    assert reg.status == install.STALE          # can't read it — assume stale
+    assert "unparseable" in reg.detail
+    # And verify still produces its lines.
+    assert install.verify(tmp_path, agent="codex", url=install.DEFAULT_URL)
+
+
+def test_codex_unparseable_toml_without_our_server_is_missing(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _codex_config(home, "[mcp_servers.other\nbroken ]]]\n")
+    reg = install._codex_registration(install.PACKAGE_SOURCE, install.DEFAULT_URL)
+    assert reg.status == install.MISSING
+
+
+def test_claude_non_uvx_registration_is_stale(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".claude.json").write_text(json.dumps({
+        "mcpServers": {
+            "flightplan": {"command": "python", "args": ["-m", "flightplan.mcp_server"]}
+        }
+    }))
+    reg = install._claude_registration(
+        tmp_path, install.PACKAGE_SOURCE, install.DEFAULT_URL)
+    assert reg.status == install.STALE
+    assert "python -m flightplan.mcp_server" in reg.detail
+
+
+# --- Argv and url validation (a name-only or source-only check is too loose) ---
+
+def _claude_entry(tmp_path, monkeypatch, entry: dict):
+    """Write ~/.claude.json with one flightplan entry and classify it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {"flightplan": entry}})
+    )
+    return install._claude_registration(
+        tmp_path, install.PACKAGE_SOURCE, install.DEFAULT_URL)
+
+
+_GOOD_ENV = {"FLIGHTPLAN_URL": install.DEFAULT_URL}
+
+
+def test_claude_correct_entry_is_current(tmp_path, monkeypatch):
+    reg = _claude_entry(tmp_path, monkeypatch, {
+        "command": "uvx", "args": ["getflightplan", "mcp"], "env": _GOOD_ENV,
+    })
+    assert reg.status == install.CURRENT
+
+
+def test_claude_missing_subcommand_is_stale(tmp_path, monkeypatch):
+    # `uvx getflightplan` runs the CLI's default, not the MCP server.
+    reg = _claude_entry(tmp_path, monkeypatch, {
+        "command": "uvx", "args": ["getflightplan"], "env": _GOOD_ENV,
+    })
+    assert reg.status == install.STALE
+    assert "uvx getflightplan" in reg.detail
+
+
+def test_claude_wrong_subcommand_is_stale(tmp_path, monkeypatch):
+    reg = _claude_entry(tmp_path, monkeypatch, {
+        "command": "uvx", "args": ["getflightplan", "install"], "env": _GOOD_ENV,
+    })
+    assert reg.status == install.STALE
+    assert "install" in reg.detail
+
+
+def test_claude_wrong_url_is_stale(tmp_path, monkeypatch):
+    reg = _claude_entry(tmp_path, monkeypatch, {
+        "command": "uvx", "args": ["getflightplan", "mcp"],
+        "env": {"FLIGHTPLAN_URL": "http://localhost:8000",
+                "FLIGHTPLAN_API_KEY": "fp-should-never-be-printed"},
+    })
+    assert reg.status == install.STALE
+    assert "registered URL http://localhost:8000" in reg.detail
+    assert f"expected {install.DEFAULT_URL}" in reg.detail
+    assert "fp-should-never-be-printed" not in reg.detail  # keys stay secret
+
+
+def test_claude_secret_in_argv_is_redacted(tmp_path, monkeypatch):
+    # Legacy shape: the key rides in the argv via `env`, not the env dict.
+    reg = _claude_entry(tmp_path, monkeypatch, {
+        "command": "env",
+        "args": ["FLIGHTPLAN_API_KEY=fp-argv-secret",
+                 f"FLIGHTPLAN_URL={install.DEFAULT_URL}",
+                 "uvx", "getflightplan", "mcp"],
+    })
+    assert reg.status == install.STALE
+    assert "fp-argv-secret" not in reg.detail
+    assert "FLIGHTPLAN_API_KEY=[redacted]" in reg.detail
+    # Non-secret tokens survive so the user can still see what it runs.
+    assert "uvx getflightplan mcp" in reg.detail
+
+
+def test_claude_missing_env_is_stale(tmp_path, monkeypatch):
+    reg = _claude_entry(tmp_path, monkeypatch, {
+        "command": "uvx", "args": ["getflightplan", "mcp"],
+    })
+    assert reg.status == install.STALE
+    assert "no FLIGHTPLAN_URL set" in reg.detail
+
+
+def _codex_entry(tmp_path, monkeypatch, args: str, env: str = "") -> object:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _codex_config(home, (
+        "[mcp_servers.flightplan]\n"
+        'command = "uvx"\n'
+        f"args = [{args}]\n"
+        f"{env}"
+    ))
+    return install._codex_registration(install.PACKAGE_SOURCE, install.DEFAULT_URL)
+
+
+_CODEX_GOOD_ENV = f'env = {{ FLIGHTPLAN_URL = "{install.DEFAULT_URL}" }}\n'
+
+
+def test_codex_correct_entry_is_current(tmp_path, monkeypatch):
+    reg = _codex_entry(tmp_path, monkeypatch, '"getflightplan", "mcp"',
+                       _CODEX_GOOD_ENV)
+    assert reg.status == install.CURRENT
+
+
+def test_codex_missing_subcommand_is_stale(tmp_path, monkeypatch):
+    reg = _codex_entry(tmp_path, monkeypatch, '"getflightplan"', _CODEX_GOOD_ENV)
+    assert reg.status == install.STALE
+
+
+def test_codex_wrong_subcommand_is_stale(tmp_path, monkeypatch):
+    reg = _codex_entry(tmp_path, monkeypatch, '"getflightplan", "install"',
+                       _CODEX_GOOD_ENV)
+    assert reg.status == install.STALE
+    assert "install" in reg.detail
+
+
+def test_codex_wrong_url_is_stale(tmp_path, monkeypatch):
+    reg = _codex_entry(
+        tmp_path, monkeypatch, '"getflightplan", "mcp"',
+        'env = { FLIGHTPLAN_URL = "http://localhost:8000" }\n',
+    )
+    assert reg.status == install.STALE
+    assert "registered URL http://localhost:8000" in reg.detail
+    assert f"expected {install.DEFAULT_URL}" in reg.detail
+
+
+def test_codex_missing_env_is_stale(tmp_path, monkeypatch):
+    reg = _codex_entry(tmp_path, monkeypatch, '"getflightplan", "mcp"')
+    assert reg.status == install.STALE
+    assert "no FLIGHTPLAN_URL set" in reg.detail
 
 
 # --- Drift tests against THIS repo (pass only after the installer runs here) ---

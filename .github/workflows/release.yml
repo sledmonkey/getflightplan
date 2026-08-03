@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      # PyPI versions cannot be replaced. Only release commits that are on main.
+      - name: Check tag commit is reachable from main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Tag ${GITHUB_REF_NAME} points at a commit not on main. Merge first, then tag."
+            exit 1
+          fi
+
+      # The package version is canonical. The tag must match it.
+      - name: Check tag matches pyproject version
+        run: |
+          version=$(python3 -c \
+            "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          tag="${GITHUB_REF_NAME}"
+          if [ "v${version}" != "${tag}" ]; then
+            echo "Tag ${tag} does not match pyproject version ${version} (expected v${version})."
+            exit 1
+          fi
+
+      # Never publish an artifact the suite hasn't passed on.
+      - run: uv sync
+      - run: uv run pytest
+
+      - run: uv build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*
+          body: |
+            See [CHANGELOG.md](https://github.com/sledmonkey/getflightplan/blob/main/CHANGELOG.md).

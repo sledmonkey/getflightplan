@@ -5,6 +5,8 @@ verb covers install and the MCP stdio client:
 
   - `getflightplan install …` — forwards verbatim to the install kit
     (`install.main`).
+  - `getflightplan uninstall …` — forwards verbatim to the removal kit
+    (`uninstall.main`).
   - `getflightplan mcp` — runs the stdio MCP client (`mcp_server.main`), the
     process an agent's MCP config launches.
 
@@ -41,14 +43,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="getflightplan",
         description="FlightPlan — shared task memory for coding agents.",
-        epilog="commands: install (per-repo setup) · mcp (stdio client an agent "
-        "launches).",
+        epilog="commands: install (per-repo setup) · uninstall (per-repo "
+        "removal) · mcp (stdio client an agent launches).",
     )
     parser.add_argument(
         "--version", action="version", version=f"getflightplan {_version()}",
     )
     parser.add_argument(
-        "command", nargs="?", choices=["install", "mcp"],
+        "command", nargs="?", choices=["install", "uninstall", "mcp"],
         help="what to run",
     )
     parser.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
@@ -59,6 +61,12 @@ def main(argv: list[str] | None = None) -> int:
         from . import install
 
         return install.main(args.rest)
+
+    if args.command == "uninstall":
+        # Lazy for the same reason as install; uninstall.py is stdlib-only too.
+        from . import uninstall
+
+        return uninstall.main(args.rest)
 
     if args.command == "mcp":
         # Lazy: mcp_server imports httpx+mcp (present in the thin uvx env).

@@ -7,6 +7,16 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 keywords = ["mcp", "coding-agents", "coordination", "claude-code", "codex"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+]
 # The MCP stdio client's runtime deps — the whole dependency surface of this
 # package. mcp<2: SDK 2.0 removes mcp.server.fastmcp.
 dependencies = [
@@ -17,6 +27,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://getflightplan.com"
 Repository = "https://github.com/sledmonkey/getflightplan"
+Changelog = "https://github.com/sledmonkey/getflightplan/blob/main/CHANGELOG.md"
+Issues = "https://github.com/sledmonkey/getflightplan/issues"
 
 [project.scripts]
 getflightplan = "flightplan.cli:main"
@@ -31,5 +43,28 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/flightplan"]
 
+# The sdist ships the code, the tests, and the docs a user needs. Nothing else.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
+exclude = [
+    "CLAUDE.md",
+    ".claude/",
+    ".flightplan.toml",
+    "scripts/",
+    "docs/",
+    "examples/",
+    "dist/",
+    "uv.lock",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["packaging: builds the wheel and sdist (a second or two)"]
