@@ -19,16 +19,19 @@ contains the CLI, MCP server, and installer for the hosted service at
 From your repo's root:
 
 ```sh
-uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install
+uvx getflightplan install
 ```
 
 That installs FlightPlan for Claude Code. For Codex, append
 `--agent codex`. The command is safe to re-run.
 
 The hosted service is in private beta; request access at
-[getflightplan.com](https://getflightplan.com). Until the package reaches
-PyPI, the command above installs directly from GitHub. After publication it
-becomes `uvx getflightplan install`.
+[getflightplan.com](https://getflightplan.com). The package is on PyPI, so the
+command above is all you need. To pin a branch or commit instead, install from
+the source:
+`uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
+
+Version and compatibility policy: [docs/versioning.md](docs/versioning.md).
 
 ## How it works
 

@@ -31,17 +31,33 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
 # The service's public default. An existing pin or --url flag overrides it
 # (precedence in `_resolve`).
 DEFAULT_URL = "https://api.getflightplan.com"
 
-# Pre-publish source for `uvx --from`: the package is not on PyPI yet, so every
-# generated registration and guidance line references the public repo. Flip to
-# the bare package name ("getflightplan") at PyPI publication (ROADMAP 36).
-PACKAGE_SOURCE = "git+https://github.com/sledmonkey/getflightplan"
+# What generated registrations and guidance lines run. The package is on PyPI,
+# so the bare name is enough and `uvx --from` is redundant (ROADMAP 36). The git
+# URL still works and is what you pass to `--source` to pin a branch or commit.
+PACKAGE_SOURCE = "getflightplan"
+
+
+def _uvx_argv(source: str) -> list[str]:
+    """The argv that starts the MCP server from `source`. `--from` is only
+    needed when the source is not the published package name."""
+    if source == PACKAGE_SOURCE:
+        return ["uvx", "getflightplan", "mcp"]
+    return ["uvx", "--from", source, "getflightplan", "mcp"]
+
+
+def _uvx_command(source: str) -> str:
+    """`_uvx_argv` as one line, for guidance text."""
+    return " ".join(_uvx_argv(source))
+
 
 # Managed-block markers. Matched by prefix (line startswith), so the trailing
 # text of the begin marker can change without orphaning old blocks. The legacy
@@ -354,42 +370,120 @@ def _reachable(url: str) -> tuple[bool, str]:
         return False, endpoint
 
 
-def _claude_mcp_registered(root: Path, name: str = "flightplan") -> bool:
-    """`name` present as an MCP server in root .mcp.json, or in ~/.claude.json
-    under the top-level mcpServers or any per-project mcpServers. Parameterised
-    so verify can check the branded `flightplan` name and, separately, the
-    legacy `intent-registry` name (for the re-register nudge)."""
-    mcp = root / ".mcp.json"
-    if mcp.exists():
-        try:
-            data = json.loads(mcp.read_text())
-            if name in (data.get("mcpServers") or {}):
-                return True
-        except Exception:
-            pass
-    home = Path.home() / ".claude.json"
-    if home.exists():
-        try:
-            data = json.loads(home.read_text())
-            if name in (data.get("mcpServers") or {}):
-                return True
-            for proj in (data.get("projects") or {}).values():
-                if isinstance(proj, dict) and name in (proj.get("mcpServers") or {}):
-                    return True
-        except Exception:
-            pass
-    return False
+# Registration classification. A name-only check accepts a registration that
+# points at a dead git URL or someone's old local checkout forever, so we look
+# at what the entry actually runs — the whole argv, and the url it talks to.
+CURRENT = "current"   # runs exactly what we would register, against our url
+STALE = "stale"       # registered, but points somewhere else
+MISSING = "missing"   # no entry at all
+
+LEGACY_SERVER_NAME = "intent-registry"
 
 
-def _codex_mcp_registered() -> bool:
-    """Either the branded `flightplan` block or a legacy `intent-registry` block
-    counts as registered — an existing dogfood config shouldn't read as missing."""
+class Registration(NamedTuple):
+    """What we found for the MCP server, and where."""
+    status: str          # CURRENT | STALE | MISSING
+    name: str | None     # the key it was registered under
+    detail: str          # the command line it runs, for reporting
+
+
+# NAME=VALUE argv tokens whose value must never be echoed. A legacy entry like
+# `env FLIGHTPLAN_API_KEY=... uvx ...` carries the secret in args, not env.
+_SECRET_TOKEN = re.compile(r"^([^=]*(?:KEY|TOKEN|SECRET|PASSWORD)[^=]*)=.+$", re.I)
+
+
+def _redact(tokens: list[str]) -> list[str]:
+    return [_SECRET_TOKEN.sub(r"\1=[redacted]", t) for t in tokens]
+
+
+def _classify(entry: object, name: str, source: str, url: str) -> Registration:
+    """CURRENT only if the entry runs exactly the argv we would register, under
+    the branded name, with FLIGHTPLAN_URL set to `url`.
+
+    The whole argv is compared against `_uvx_argv(source)` — the single source of
+    truth — so a missing or wrong subcommand (`uvx getflightplan`,
+    `uvx getflightplan install`) is caught too. A hand-written equivalent like
+    `uvx --from getflightplan getflightplan mcp` reads STALE; that's fine, STALE
+    is an advisory nudge plus a re-register offer, not an error.
+    """
+    if not isinstance(entry, dict):
+        return Registration(STALE, name, "unrecognized entry")
+    command = str(entry.get("command") or "")
+    raw_args = entry.get("args") or []
+    args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
+    detail = " ".join(_redact([command, *args])).strip() or "(no command)"
+
+    argv_ok = (
+        name == "flightplan"
+        and [Path(command).stem, *args] == _uvx_argv(source)
+    )
+    if not argv_ok:
+        return Registration(STALE, name, detail)
+
+    # Argv is right — now the url. Never report the API key, only the url.
+    env = entry.get("env")
+    found_url = env.get("FLIGHTPLAN_URL") if isinstance(env, dict) else None
+    if found_url != url:
+        where = f"registered URL {found_url}" if found_url else "no FLIGHTPLAN_URL set"
+        return Registration(STALE, name, f"{detail} ({where}, expected {url})")
+    return Registration(CURRENT, name, detail)
+
+
+def _claude_registration(root: Path, source: str, url: str) -> Registration:
+    """Find the MCP server entry in root .mcp.json, or in ~/.claude.json under
+    the top-level mcpServers or any per-project mcpServers, and classify it.
+    The branded name wins; the legacy `intent-registry` name is looked up second
+    so a pre-rename install reads as stale rather than missing."""
+    blocks: list[dict] = []
+    for path in (root / ".mcp.json", Path.home() / ".claude.json"):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        blocks.append(data.get("mcpServers") or {})
+        for proj in (data.get("projects") or {}).values():
+            if isinstance(proj, dict):
+                blocks.append(proj.get("mcpServers") or {})
+
+    for name in ("flightplan", LEGACY_SERVER_NAME):
+        for servers in blocks:
+            if isinstance(servers, dict) and name in servers:
+                return _classify(servers[name], name, source, url)
+    return Registration(MISSING, None, "")
+
+
+def _codex_registration(source: str, url: str) -> Registration:
+    """Same for ~/.codex/config.toml, parsed as TOML. If the file won't parse we
+    can't read the source, so a server table under either name counts as stale
+    rather than crashing the run."""
     cfg = Path.home() / ".codex" / "config.toml"
     try:
         text = cfg.read_text() if cfg.exists() else ""
-        return "flightplan" in text or "intent-registry" in text
-    except Exception:
-        return False
+    except OSError:
+        return Registration(MISSING, None, "")
+    if not text.strip():
+        return Registration(MISSING, None, "")
+
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        for name in ("flightplan", LEGACY_SERVER_NAME):
+            # The `]` is optional: a missing bracket is one way the file broke.
+            header = rf'^\s*\[\s*mcp_servers\s*\.\s*"?{re.escape(name)}"?\s*\]?\s*$'
+            if re.search(header, text, re.M):
+                return Registration(STALE, name, "unparseable ~/.codex/config.toml")
+        return Registration(MISSING, None, "")
+
+    servers = data.get("mcp_servers") or {}
+    if isinstance(servers, dict):
+        for name in ("flightplan", LEGACY_SERVER_NAME):
+            if name in servers:
+                return _classify(servers[name], name, source, url)
+    return Registration(MISSING, None, "")
 
 
 def _stop_key_available(root: Path) -> bool:
@@ -400,9 +494,12 @@ def _stop_key_available(root: Path) -> bool:
     return False
 
 
-def verify(root: Path, *, agent: str, url: str) -> list[str]:
+def verify(
+    root: Path, *, agent: str, url: str, source: str = PACKAGE_SOURCE
+) -> list[str]:
     """Advisory checks, one formatted line (or block) each. Never mutates
-    anything; never prints a secret value."""
+    anything; never prints a secret value. `source` is what a registration must
+    run to count as current — the default, or whatever `--source` asked for."""
     lines: list[str] = []
 
     ok, endpoint = _reachable(url)
@@ -414,16 +511,25 @@ def verify(root: Path, *, agent: str, url: str) -> list[str]:
     )
 
     if agent in ("claude", "both"):
-        if _claude_mcp_registered(root, "flightplan"):
+        reg = _claude_registration(root, source, url)
+        if reg.status == CURRENT:
             lines.append("  ok   claude: flightplan MCP server is registered")
-        elif _claude_mcp_registered(root, "intent-registry"):
-            # Legacy name still works, so it counts as registered — but nudge the
-            # rename so the label matches the branded command.
+        elif reg.name == LEGACY_SERVER_NAME:
+            # The legacy name still works, so this is a nudge, not a failure.
             lines.append(
                 "  ok?  claude: registered under legacy name 'intent-registry' — "
                 "re-register:\n"
                 "         claude mcp remove intent-registry && claude mcp add "
-                f"flightplan -- uvx --from {PACKAGE_SOURCE} getflightplan mcp"
+                f"flightplan -- {_uvx_command(source)}"
+            )
+        elif reg.status == STALE:
+            lines.append(
+                f"  ok?  claude: flightplan is registered but runs {reg.detail} "
+                f"— not the current {_uvx_command(source)}. Re-register:\n"
+                "         claude mcp remove flightplan --scope user && "
+                "claude mcp add flightplan --scope user "
+                "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
+                f"-- {_uvx_command(source)}"
             )
         else:
             lines.append(
@@ -431,7 +537,7 @@ def verify(root: Path, *, agent: str, url: str) -> list[str]:
                 "or ~/.claude.json — register it:\n"
                 "         claude mcp add flightplan --scope user "
                 "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
-                f"-- uvx --from {PACKAGE_SOURCE} getflightplan mcp\n"
+                f"-- {_uvx_command(source)}\n"
                 "       (set FLIGHTPLAN_URL and FLIGHTPLAN_API_KEY in the server "
                 "env; values not shown here)"
             )
@@ -446,17 +552,30 @@ def verify(root: Path, *, agent: str, url: str) -> list[str]:
             )
 
     if agent in ("codex", "both"):
-        if _codex_mcp_registered():
+        reg = _codex_registration(source, url)
+        args = ", ".join(f'"{a}"' for a in _uvx_argv(source)[1:])
+        block = (
+            "         [mcp_servers.flightplan]\n"
+            '         command = "uvx"\n'
+            f"         args = [{args}]\n"
+            f'         env = {{ FLIGHTPLAN_URL = "{url}", '
+            'FLIGHTPLAN_API_KEY = "<your-key>" }'
+        )
+        if reg.status == CURRENT:
             lines.append("  ok   codex: flightplan MCP server is registered")
+        elif reg.status == STALE:
+            where = (
+                f"under legacy name '{reg.name}'" if reg.name == LEGACY_SERVER_NAME
+                else f"runs {reg.detail} — not the current {_uvx_command(source)}"
+            )
+            lines.append(
+                f"  ok?  codex: flightplan is registered but {where}. "
+                f"Replace it in ~/.codex/config.toml with:\n{block}"
+            )
         else:
             lines.append(
                 "  !!   codex: flightplan not found in ~/.codex/config.toml — "
-                "add:\n"
-                "         [mcp_servers.flightplan]\n"
-                '         command = "uvx"\n'
-                f'         args = ["--from", "{PACKAGE_SOURCE}", "getflightplan", "mcp"]\n'
-                '         env = { FLIGHTPLAN_URL = "https://api.getflightplan.com", '
-                'FLIGHTPLAN_API_KEY = "<your-key>" }'
+                f"add:\n{block}"
             )
 
     return lines
@@ -473,20 +592,24 @@ def verify(root: Path, *, agent: str, url: str) -> list[str]:
 # `--no-input` absent. Secrets are never echoed: not the key, not any command
 # line carrying it, not subprocess output.
 
-# The manual-registration line printed when we can't (or won't) auto-register.
-_CLAUDE_REGISTER_GUIDANCE = (
-    "  →    register the flightplan MCP server by hand:\n"
-    "         claude mcp add flightplan --scope user "
-    "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
-    f"-- uvx --from {PACKAGE_SOURCE} getflightplan mcp"
-)
+# The manual-registration lines printed when we can't (or won't) auto-register.
 
-_CODEX_REGISTER_GUIDANCE = (
-    "  →    register the flightplan MCP server by hand:\n"
-    "         codex mcp add flightplan "
-    "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
-    f"-- uvx --from {PACKAGE_SOURCE} getflightplan mcp"
-)
+def _claude_guidance(source: str = PACKAGE_SOURCE) -> str:
+    return (
+        "  →    register the flightplan MCP server by hand:\n"
+        "         claude mcp add flightplan --scope user "
+        "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
+        f"-- {_uvx_command(source)}"
+    )
+
+
+def _codex_guidance(source: str = PACKAGE_SOURCE) -> str:
+    return (
+        "  →    register the flightplan MCP server by hand:\n"
+        "         codex mcp add flightplan "
+        "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
+        f"-- {_uvx_command(source)}"
+    )
 
 
 def _key_config_file() -> Path:
@@ -529,7 +652,7 @@ def _run_claude_register(url: str, key: str, source: str) -> bool:
         "claude", "mcp", "add", "flightplan", "--scope", "user",
         "--env", f"FLIGHTPLAN_URL={url}",
         "--env", f"FLIGHTPLAN_API_KEY={key}",
-        "--", "uvx", "--from", source, "getflightplan", "mcp",
+        "--", *_uvx_argv(source),
     ]
     try:
         proc = subprocess.run(
@@ -548,7 +671,7 @@ def _run_codex_register(url: str, key: str, source: str) -> bool:
         "codex", "mcp", "add", "flightplan",
         "--env", f"FLIGHTPLAN_URL={url}",
         "--env", f"FLIGHTPLAN_API_KEY={key}",
-        "--", "uvx", "--from", source, "getflightplan", "mcp",
+        "--", *_uvx_argv(source),
     ]
     try:
         proc = subprocess.run(
@@ -557,6 +680,19 @@ def _run_codex_register(url: str, key: str, source: str) -> bool:
         return proc.returncode == 0
     except Exception:
         return False
+
+
+def _mcp_remove(binary: str, name: str) -> None:
+    """Drop an existing registration before re-adding it: `mcp add` on a name
+    that already exists is an error in some CLI versions, and a legacy-named
+    entry has to go anyway. Failure is fine — the add is what matters."""
+    cmd = [binary, "mcp", "remove", name]
+    if binary == "claude":
+        cmd += ["--scope", "user"]
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def _offer_to_fix(root: Path, *, agent: str, url: str, source: str) -> None:
@@ -579,17 +715,24 @@ def _offer_to_fix(root: Path, *, agent: str, url: str, source: str) -> None:
 
     mutated = False
 
-    def offer(name: str, registered: bool, register, guidance: str) -> None:
+    def offer(name: str, reg: Registration, register, guidance: str) -> None:
         """One registration offer: run it on yes (the default), fall back to
-        the manual guidance on decline, failure, or a missing binary."""
+        the manual guidance on decline, failure, or a missing binary. A stale
+        registration gets the same offer, worded as a replacement."""
         nonlocal mutated
-        if registered:
+        if reg.status == CURRENT:
             return
+        stale = reg.status == STALE
+        if stale:
+            print(f"  ok?  {name}: existing registration runs {reg.detail}")
+        verb = "Re-register" if stale else "Register"
         if shutil.which(name) and key:
             answer = input(
-                f"Register the flightplan MCP server with {name} now? [Y/n] "
+                f"{verb} the flightplan MCP server with {name} now? [Y/n] "
             ).strip().lower()
             if answer in ("", "y", "yes"):
+                if stale and reg.name:
+                    _mcp_remove(name, reg.name)
                 if register(url, key, source):
                     print(f"  registered  flightplan MCP server ({name})")
                     mutated = True
@@ -606,18 +749,17 @@ def _offer_to_fix(root: Path, *, agent: str, url: str, source: str) -> None:
     if agent in ("claude", "both"):
         offer(
             "claude",
-            _claude_mcp_registered(root, "flightplan")
-            or _claude_mcp_registered(root, "intent-registry"),
+            _claude_registration(root, source, url),
             _run_claude_register,
-            _CLAUDE_REGISTER_GUIDANCE,
+            _claude_guidance(source),
         )
     if agent in ("codex", "both"):
-        offer("codex", _codex_mcp_registered(), _run_codex_register,
-              _CODEX_REGISTER_GUIDANCE)
+        offer("codex", _codex_registration(source, url), _run_codex_register,
+              _codex_guidance(source))
 
     if mutated:
         print("re-verify:")
-        for line in verify(root, agent=agent, url=url):
+        for line in verify(root, agent=agent, url=url, source=source):
             print(line)
         print("  →    start a new agent session in this repo to pick up the "
               "registration.")
@@ -662,9 +804,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--source", default=PACKAGE_SOURCE,
-        help="what `uvx --from` references when auto-registering the MCP server "
-        "(default: the public GitHub repo until PyPI publication; pass a local "
-        "path for development)",
+        help="what the registered MCP server runs (default: the PyPI package "
+        "`getflightplan`; pass a git URL or a local path for development, and "
+        "it is registered via `uvx --from`)",
     )
     args = parser.parse_args(argv)
 
@@ -687,7 +829,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _, resolved_url = _resolve(root, args.repo, args.url)
     print("verify:")
-    for line in verify(root, agent=args.agent, url=resolved_url):
+    for line in verify(root, agent=args.agent, url=resolved_url, source=args.source):
         print(line)
 
     # Interactive one-command onboarding — offer to fill what verify flagged.
