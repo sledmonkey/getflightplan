@@ -133,8 +133,10 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
   searchable team memory. Decisions are also the correction mechanism:
   completed outcomes are immutable, so if one later proves wrong, post a
   decision citing what actually held.
-- The registry is advisory and must never block work: if its tools error,
-  proceed, and mention the failure to your user once.
+- The registry is advisory and must never block work: if its tools are missing
+  or error, proceed with the work, and tell your user once that they can run
+  `uvx getflightplan install` (see getflightplan.com) to join this repo's
+  registry.
 
 </details>
 

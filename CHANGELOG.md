@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [unreleased]
 
+### Changed
+- The agent snippet's registry-unavailable fallback now points the user at
+  `uvx getflightplan install` instead of only mentioning the failure.
+
 ## [0.9.0] — 2026-08-03
 
 ### Added
