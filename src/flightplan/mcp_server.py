@@ -7,6 +7,13 @@ Design rule carried into error handling: the registry is advisory and must
 never block work. Network/server failures come back as a result the agent can
 read and move past, not an exception that derails the session.
 
+Two things happen here that the tool schemas don't show, because agents should
+not have to think about either: the `.flightplan.toml` pin decides what a call
+posts and queries under (its id, and its readable name in `repo`), and every
+path or glob is canonicalized to repo-relative before it goes on the wire. A
+path that resolves outside the repository is refused rather than sent — see
+paths.py.
+
 Env: FLIGHTPLAN_URL, FLIGHTPLAN_API_KEY.
 """
 
@@ -17,6 +24,8 @@ from typing import Annotated, Literal
 import httpx
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
+
+from . import config, paths
 
 # One MCP server process ≈ one agent session; good enough for the spec's
 # "agent session id if available".
@@ -79,7 +88,32 @@ async def _call(method: str, path: str, **kwargs) -> dict:
         except Exception:
             detail = resp.text
         return {"error": f"registry rejected the request ({resp.status_code}): {detail}"}
+    # Returned as-is: server responses may carry fields this client has never
+    # heard of, and passing them through is how new ones reach the agent.
     return resp.json()
+
+
+def _pin() -> config.Pin:
+    """The nearest `.flightplan.toml` pin, read fresh.
+
+    Read from the pin file only — the client never asks the service to turn a
+    name into an id. The pin wins over whatever an agent passes as `repo`: a
+    stale name derived by an agent that never read the pin would otherwise
+    route somewhere else.
+    """
+    return config.find_pin()
+
+
+def _rejected(exc: paths.OutsideRepository) -> dict:
+    """A path the client refuses to send, handed back the way every other
+    failure is — a result the agent can read and act on."""
+    return {
+        "error": str(exc),
+        "advice": (
+            "Nothing was sent. Re-send with repository-relative paths, or omit "
+            "the ones that live outside this repository."
+        ),
+    }
 
 
 @mcp.tool(
@@ -122,14 +156,24 @@ async def post_intent(
         Field(description="Short headline for the work, ≤80 chars, like a commit subject line (e.g. 'FTS5 search + recall mode'). Cheap to write and the feed reads far better with one — provide it."),
     ] = None,
 ) -> dict:
+    try:
+        touches = paths.normalize_all(touches)
+    except paths.OutsideRepository as e:
+        return _rejected(e)
+
+    # The pin decides what this posts under: its id when there is one, and its
+    # readable name in `repo` either way.
+    pin = _pin()
     body: dict = {
-        "repo": repo,
+        "repo": pin.name or repo,
         "summary": summary,
         "touches": touches,
         "kind": kind,
         "branch": branch,
         "session": SESSION,
     }
+    if pin.target_id:
+        body["target_id"] = pin.target_id
     if outcome is not None:
         body["outcome"] = outcome
     if title is not None:
@@ -197,9 +241,22 @@ async def list_intents(
         ),
     ] = "all",
 ) -> dict:
+    try:
+        overlaps = paths.normalize_all(overlaps)
+    except paths.OutsideRepository as e:
+        return _rejected(e)
+
     params: dict = {"my_kind": my_kind, "limit": limit}
+    # Reads are not routed like posts. `repo` is passed through exactly as the
+    # agent asked — naming another repository is a legitimate history query.
+    # The pinned id is added only when the query names this checkout's own
+    # repo, where it is pure precision. No repo, no filter: the query stays as
+    # broad as it was written.
+    pin = _pin()
     if repo:
         params["repo"] = repo
+        if pin.target_id and repo == pin.name:
+            params["target_id"] = pin.target_id
     if status:
         params["status"] = status
     if overlaps:
@@ -250,6 +307,11 @@ async def update_intent(
     branch: Annotated[str | None, Field(description="Git branch, if it has changed.")] = None,
     title: Annotated[str | None, Field(description="Revised short headline, ≤80 chars.")] = None,
 ) -> dict:
+    try:
+        touches = paths.normalize_all(touches)
+    except paths.OutsideRepository as e:
+        return _rejected(e)
+
     # Omit Nones from the wire — explicit nulls are no-ops server-side anyway,
     # but sending only the provided fields keeps the payload unambiguous.
     body: dict = {}
@@ -299,6 +361,11 @@ async def complete_intent(
         Field(description="True if ANY of the work is not yet committed (untracked/unstaged/staged-only). This flag escalates collision warnings for other agents. False = all committed. Omit if unknown."),
     ] = None,
 ) -> dict:
+    try:
+        files = paths.normalize_all(files)
+    except paths.OutsideRepository as e:
+        return _rejected(e)
+
     body: dict = {"status": status, "outcome": outcome}
     if files is not None:
         body["files"] = files

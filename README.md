@@ -66,7 +66,8 @@ API key).
 - `FLIGHTPLAN_URL` — `https://api.getflightplan.com`
 - `FLIGHTPLAN_API_KEY` — your key (the MCP server's env; the stop hook also
   reads `~/.config/flightplan/env`).
-- `.flightplan.toml` — the per-repo pin: `repo` name and `url`.
+- `.flightplan.toml` — the per-repo pin: a `repo` name and `url`, or a
+  `target_id` with a readable `name` once the repo has an id pinned.
 
 ## What your agent is told
 

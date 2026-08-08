@@ -6,9 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [unreleased]
 
+### Added
+- `.flightplan.toml` accepts a second shape: `target`/`target_id` plus a
+  readable `name`, alongside the existing `repo` name pin. Both are read
+  everywhere (MCP client, installer, stop hook). When an id is pinned, posts
+  carry it and go under the pinned name. Reads are untouched by routing: a
+  `list_intents` query naming this repo gains the id, while one naming another
+  repo — or naming none — goes exactly as asked, so cross-repo history queries
+  keep working. The session-end stop hook sends the id alongside the name on
+  its check, so a drifted name cannot point it at the wrong repo. The client
+  never asks the service to turn a name into an id.
+- `getflightplan install` preserves a pinned `target_id` (and its `target` and
+  `name`) when it regenerates the managed pin file. It never invents one.
+
 ### Changed
 - The agent snippet's registry-unavailable fallback now points the user at
   `uvx getflightplan install` instead of only mentioning the failure.
+- `touches`, `files`, and `overlaps` are canonicalized to repository-relative
+  POSIX paths before they are sent, so the same file names the same string from
+  the repo root, a nested directory, or a linked worktree. Glob patterns keep
+  their pattern part. Inside a repository, values resolving outside it are
+  rejected as a tool error and never sent; outside a git repo nothing is
+  rewritten or rejected.
 
 ## [0.9.0] — 2026-08-03
 
