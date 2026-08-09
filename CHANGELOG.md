@@ -4,6 +4,35 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] — 2026-08-09
+
+### Added
+- The pin file `.flightplan.toml` accepts a third shape: `target = "project"`.
+  A project pin binds a workspace folder. The child directories of the
+  workspace are separate repositories. Each child has its own repository pin.
+- Under a project pin, the client makes each path relative to the workspace
+  root. Then the client maps each path to a child repository.
+- If all paths are in one child repository, the client posts a repository
+  intent. This intent is the same as an intent posted from inside that
+  repository.
+- If the paths are in two or more repositories, the client posts a project
+  intent. This intent includes a `repositories` field. The field divides the
+  paths by repository. The registry uses the field for collision checks
+  across repositories.
+- When you update or complete an intent, the client first asks the registry
+  where the intent is stored. The client does not keep this state itself.
+- The `list_intents` pre-planning check sees only project intents. The
+  registry does the full cross-repository check when you post.
+- The session-end stop hook also checks the child repositories of the
+  project. An open intent in a child repository keeps the session open.
+- The installer keeps a project pin as it is. It does not replace it, and it
+  does not invent one.
+
+### Changed
+- Under a project pin, the client rejects a path that points out of the
+  workspace. This is the same rule that rejects a path that points out of a
+  repository.
+
 ## [0.9.2] — 2026-08-09
 
 ### Added
