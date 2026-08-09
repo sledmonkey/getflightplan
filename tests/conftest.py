@@ -16,7 +16,11 @@ import pytest
 
 
 class StubRegistry:
-    """A one-endpoint registry. Set `response` to control what comes back."""
+    """A one-endpoint registry. Set `response` to control what comes back.
+
+    Set `response` to a function of the request path when one test needs a
+    different answer for each request.
+    """
 
     def __init__(self) -> None:
         self.url = ""
@@ -34,7 +38,10 @@ class StubRegistry:
 def _handler_for(stub: StubRegistry):
     class Handler(BaseHTTPRequestHandler):
         def _reply(self) -> None:
-            payload = json.dumps(stub.response).encode()
+            reply = stub.response
+            if callable(reply):
+                reply = reply(self.path)
+            payload = json.dumps(reply).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))

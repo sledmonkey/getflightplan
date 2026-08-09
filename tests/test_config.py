@@ -212,6 +212,19 @@ def test_list_with_a_legacy_pin_sends_no_target_id(tmp_path, monkeypatch, regist
         assert "target_id" not in query
 
 
+@pytest.mark.parametrize("pin", [REPOSITORY, LEGACY])
+def test_a_check_with_globs_is_one_query_without_a_project_pin(
+    tmp_path, monkeypatch, registry, call, pin,
+):
+    # Only a project pin has child repositories to ask. Every other pin sends
+    # the one query it always sent.
+    (tmp_path / config.PIN_FILENAME).write_text(pin)
+    monkeypatch.chdir(tmp_path)
+    call(mcp_server.list_intents(overlaps=["src/api.py", "tests/*.py"]))
+    assert len(registry.paths) == 1
+    assert _query(registry)["overlaps"] == "src/api.py,tests/*.py"
+
+
 def test_unknown_response_fields_pass_through(tmp_path, monkeypatch, registry, call):
     # Responses gained a nullable target_id; they will gain more. The client
     # hands the whole object back rather than filtering it.

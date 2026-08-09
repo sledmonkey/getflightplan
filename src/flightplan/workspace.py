@@ -33,10 +33,14 @@ Stdlib only.
 
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import NamedTuple
 
 from . import config
+
+# Characters that make a path segment a pattern.
+_WILDCARDS = "*?["
 
 
 class Child(NamedTuple):
@@ -89,6 +93,39 @@ class Workspace(NamedTuple):
             {"target_id": self.children[d].target_id, field: local}
             for d, local in mapped.items()
         ]
+
+    def fan_out(self, values: list[str] | None) -> dict[str, list[str]]:
+        """The globs for each child repository in a collision check.
+
+        This mapping is wider than `group`. A first segment of `**` can match
+        a path at any depth, so every child gets the full pattern. A first
+        segment with a wildcard, like `agent*`, is matched against the child
+        directory names. Each match gets the remainder, or `**` when there is
+        no remainder. A concrete first segment maps as `map_value` does.
+
+        Only reads use this mapping. A read that asks too widely is safe. A
+        post must not project work into a repository it may not touch, so
+        posts keep the strict mapping in `group`.
+        """
+        mapped: dict[str, list[str]] = {}
+
+        def add(child_dir: str, glob: str) -> None:
+            mapped.setdefault(child_dir, []).append(glob)
+
+        for value in values or []:
+            segment, _, rest = value.partition("/")
+            if segment == "**":
+                for d in self.children:
+                    add(d, value)
+            elif any(ch in segment for ch in _WILDCARDS):
+                for d in self.children:
+                    if fnmatch(d, segment):
+                        add(d, rest or "**")
+            else:
+                child_dir, local = self.map_value(value)
+                if child_dir is not None:
+                    add(child_dir, local)
+        return mapped
 
     def child_by_id(self, target_id: str) -> Child | None:
         """The child repository with this id, or None if none is pinned here."""
