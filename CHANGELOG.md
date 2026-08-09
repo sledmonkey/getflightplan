@@ -4,6 +4,23 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] — 2026-08-09
+
+### Added
+- Under a project pin, a `list_intents` check with `overlaps` also asks each
+  child repository that the globs touch. Before, the check asked the project
+  only, and it did not find work posted inside a child repository. Each child
+  repository is asked with its own paths. A glob that starts with `**` goes
+  to every child repository unchanged. A glob with a wildcard first segment,
+  like `agent*/src/**`, goes to each child directory that matches. A check of
+  a child repository uses the globs only, because a collision across two
+  scopes is deterministic. The judge still runs one time, on the query of the
+  project. The results are merged into one list. For one intent, the project
+  result wins over a child copy of that intent. Between two child results,
+  the loudest alert wins. If a child repository cannot be reached, the other
+  results still come back with a `note` that names it. The full check at the
+  time you post an intent does not change.
+
 ## [0.10.0] — 2026-08-09
 
 ### Added

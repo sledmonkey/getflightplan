@@ -24,9 +24,14 @@ split per repository, so cross-repository collision checks still line up. That
 field is the only wire addition; every other pin shape sends what it always
 sent.
 
+A project pin also changes one read. A collision check with globs asks the
+workspace and each child repository that the globs touch. Then the client
+merges the results into one list. See list_intents.
+
 Env: FLIGHTPLAN_URL, FLIGHTPLAN_API_KEY.
 """
 
+import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -43,6 +48,10 @@ from . import config, paths, workspace
 SESSION = uuid.uuid4().hex[:12]
 
 Kind = Literal["build", "explore", "spike", "decision"]
+
+# How loud each alert level is. A smaller number is louder. An unknown level
+# sorts last.
+ALERT_RANK = {"warn": 0, "nudge": 1, "fyi": 2}
 
 mcp = FastMCP(
     "flightplan",
@@ -239,6 +248,153 @@ async def _route_patch(
     return await _call("PATCH", f"/intents/{id}", json=body)
 
 
+def _intents_of(result: object) -> list | None:
+    """The intent list in a registry response.
+
+    The result is None if the response is an error. The result is also None if
+    the response has no usable list.
+    """
+    if not isinstance(result, dict) or "error" in result:
+        return None
+    items = result.get("intents")
+    return items if isinstance(items, list) else None
+
+
+def _rank(item: object) -> int:
+    """How loud the alert on one intent is. A smaller number is louder."""
+    level = item.get("alert_level") if isinstance(item, dict) else None
+    return ALERT_RANK.get(level, len(ALERT_RANK))
+
+
+def _updated(item: object) -> str:
+    """The time of the last change to one intent. An empty string sorts last."""
+    value = item.get("updated_at") if isinstance(item, dict) else None
+    return value if isinstance(value, str) else ""
+
+
+def _child_query(params: dict, child: workspace.Child, globs: list[str]) -> dict:
+    """The query for one child repository.
+
+    The query keeps the filters of the project query. It sends the globs of
+    that repository and the id of that repository. It sends no `repo`, because
+    the id is more exact. It sends no `summary`, because the judge runs on the
+    project query only. A cross-scope collision is deterministic on the globs.
+    """
+    query = {k: v for k, v in params.items() if k not in ("repo", "summary")}
+    query["overlaps"] = ",".join(globs)
+    query["target_id"] = child.target_id
+    return query
+
+
+def _merge(project: list, from_children: list[list], limit: int) -> list:
+    """One list of intents from the project query and the child queries.
+
+    The registry keeps a copy of a project intent in each child repository. The
+    copy has the same id, but it has no prose. So the item from the project
+    query wins. Between two items from child queries, the loudest alert wins.
+    The list is sorted loudest first, then newest first. Then it is cut to
+    `limit`.
+    """
+    merged: dict = {}
+    unkeyed = 0
+
+    def key_of(item: object) -> object:
+        # An intent with no id cannot be compared with any other intent. Give
+        # it a key of its own, so it is always kept.
+        nonlocal unkeyed
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(item_id, str) and item_id:
+            return item_id
+        unkeyed += 1
+        return ("unkeyed", unkeyed)
+
+    for item in project:
+        merged.setdefault(key_of(item), item)
+    from_project = set(merged)
+
+    for items in from_children:
+        for item in items:
+            key = key_of(item)
+            if key in from_project:
+                continue
+            held = merged.get(key)
+            if held is None or _rank(item) < _rank(held):
+                merged[key] = item
+
+    out = list(merged.values())
+    out.sort(key=_updated, reverse=True)
+    out.sort(key=_rank)
+    return out[:limit]
+
+
+async def _fan_out(
+    ws: workspace.Workspace, params: dict, overlaps: list[str], limit: int
+) -> dict:
+    """Ask the project and each child repository that the globs touch.
+
+    A glob written from the workspace root starts with a child directory name.
+    Work posted inside that child repository keeps repo-local paths. Such work
+    cannot match the workspace-relative glob. So each touched child repository
+    gets a query with its own globs. A glob with a wildcard first segment fans
+    out to every child directory it can match (workspace.fan_out). Globs that
+    belong to no child repository stay in the project query only. The queries
+    run at the same time.
+
+    The registry is advisory. If a child query fails or raises, the client
+    drops the results of that child and adds a `note`. If the project query
+    raises, the client returns an advisory error. It never raises itself.
+    """
+    # When no child matches, the list of child queries is empty and only the
+    # project query runs. It still goes through the same guarded gather, so
+    # an unexpected exception comes back as an advisory error on every path.
+    mapped = ws.fan_out(overlaps)
+    children = [ws.children[d] for d in mapped]
+    queries = [params] + [
+        _child_query(params, ws.children[d], globs) for d, globs in mapped.items()
+    ]
+    # _call turns network failures into error dicts, but a malformed reply can
+    # still raise. return_exceptions keeps one bad query from losing the rest.
+    project, *child_results = await asyncio.gather(
+        *(_call("GET", "/intents", params=q) for q in queries),
+        return_exceptions=True,
+    )
+
+    if isinstance(project, BaseException):
+        return {
+            "error": f"the collision check failed ({type(project).__name__}: {project}).",
+            "advice": (
+                "The registry is advisory — proceed with your work. Mention "
+                "the failure to your user once."
+            ),
+        }
+    project_items = _intents_of(project)
+    if project_items is None:
+        # The project query is the one query this path cannot do without. Its
+        # result goes back the way it went back before the fan-out.
+        return project
+
+    from_children: list[list] = []
+    unreachable: list[str] = []
+    for child, result in zip(children, child_results):
+        items = None if isinstance(result, BaseException) else _intents_of(result)
+        if items is None:
+            unreachable.append(child.name or child.dir)
+        else:
+            from_children.append(items)
+
+    # Other fields of the project response pass through. The server can send
+    # fields that this client has never heard of.
+    merged = dict(project)
+    merged["intents"] = _merge(project_items, from_children, limit)
+    if unreachable:
+        merged["note"] = (
+            "The check did not reach these repositories: "
+            + ", ".join(unreachable)
+            + ". Work in them is not in this list."
+        )
+    return merged
+
+
 @mcp.tool(
     description=(
         "Register what you are about to work on so other developers' agents can "
@@ -374,10 +530,14 @@ async def list_intents(
     # repo, where it is pure precision. No repo, no filter: the query stays as
     # broad as it was written.
     #
-    # Known gap under a project pin: a query scoped to the workspace sees
-    # project-scoped intents only, so the pre-planning check here can miss work
-    # posted inside a child repository. The post path does the full
-    # cross-repository check, which is where a real collision surfaces.
+    # Under a project pin, one query is not enough. The globs are
+    # workspace-relative. Work posted inside a child repository keeps
+    # repo-local paths, so it cannot match such a glob. So the client also
+    # queries each child repository that the globs touch. Each child query
+    # sends the globs and the id of that repository. The judge runs on the
+    # project query only. The client merges all the results into one list. A
+    # query that names another repository is a history question about that
+    # repository. It goes out unchanged.
     pin, ws = _binding()
     try:
         overlaps = paths.normalize_all(overlaps, _root(ws))
@@ -413,6 +573,10 @@ async def list_intents(
     # too, so omitting it keeps the wire clean and avoids surprises on older servers.
     if match == "any":
         params["match"] = match
+    # The fan-out applies to a project pin, to a query with globs, and to a
+    # query that asks about this workspace.
+    if ws is not None and overlaps and (not repo or repo == pin.name):
+        return await _fan_out(ws, params, overlaps, limit)
     return await _call("GET", "/intents", params=params)
 
 

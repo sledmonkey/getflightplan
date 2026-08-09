@@ -1,6 +1,6 @@
 [project]
 name = "getflightplan"
-version = "0.10.0"
+version = "0.11.0"
 description = "One shared picture across coding agents: catch collisions across sessions, teammates, and providers, then preserve what happened and why."
 readme = "README.md"
 requires-python = ">=3.11"
