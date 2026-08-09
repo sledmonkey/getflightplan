@@ -1,5 +1,7 @@
 # Managed by getflightplan install. Committed on purpose: it pins what every
 # agent on this repo posts intents under — either a `repo` name, or a
 # `target_id` plus a readable `name`. No secrets belong here.
-repo = "getflightplan"
+target = "repository"
+target_id = "repo_2dda59066669491c8570edb8a5711d1e"
+name = "getflightplan"
 url = "https://api.getflightplan.com"
