@@ -4,6 +4,42 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] — 2026-08-09
+
+### Added
+- `getflightplan login` gets a credential from the service. You do not copy
+  an API key.
+- The command opens your browser at the approval page of the service. You
+  approve there. The service then sends the browser to a listener on this
+  machine. The listener uses the address 127.0.0.1 and a free port. It starts
+  before the browser, and it closes after the one callback.
+- The command uses PKCE. It keeps a secret verifier in the process. It sends
+  only a hash of the verifier to the service. The one-time code from the
+  callback is of no use without the verifier.
+- If no approval arrives in 5 minutes, the command stops. It then tells you
+  about the `--headless` flow.
+- `getflightplan login --headless` logs you in with a code. The command shows
+  a short code and an address. You open that address on another device and
+  enter the code. The command waits until you approve.
+- The client changes to the code flow without a question in two conditions:
+  the listener cannot open a port, or the browser does not start.
+- The credential goes to `~/.config/flightplan/env` with mode 600. This is the
+  file that already holds the API key, so the MCP server and the stop hook
+  find it. The client never prints the credential. The client never writes it
+  to `.flightplan.toml` or to any other file in the repository.
+- A login rotates the credential of this machine. The command sends the id of
+  the stored credential, and the service revokes that credential when it
+  mints the new one. The id is not a secret. Only your own credential can be
+  replaced this way.
+- `getflightplan logout` removes the credential from this machine. It keeps
+  every other line in the file. To revoke the credential on the service, use
+  the `/devices` page.
+
+### Changed
+- The write of `~/.config/flightplan/env` is now atomic. The new content goes
+  to a temporary file with mode 600 first. Then it replaces the old file in
+  one step. A line in the file that is not the key stays as it is.
+
 ## [0.11.0] — 2026-08-09
 
 ### Added

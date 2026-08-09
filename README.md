@@ -61,6 +61,19 @@ To remove everything the installer wrote, run `getflightplan uninstall` from
 the repo root (`--dry-run` to preview, `--purge-key` to also delete the saved
 API key).
 
+## Logging in
+
+`getflightplan login` gets a credential without a copied API key. It opens
+your browser, you approve there, and the credential goes to
+`~/.config/flightplan/env` with mode 600. The credential is never printed.
+
+On a machine with no browser, run `getflightplan login --headless`. The
+command shows a short code and an address. Open that address on another
+device and enter the code.
+
+`getflightplan logout` removes the stored credential from this machine. To
+revoke it on the service, use the `/devices` page.
+
 ## Configuration
 
 - `FLIGHTPLAN_URL` — `https://api.getflightplan.com`
