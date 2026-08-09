@@ -32,6 +32,11 @@ does not leave as one. Inside a repository, a value that resolves outside it
 root) is rejected by the client: the request is not sent, and the agent is told
 to use repository-relative paths instead.
 
+When `.flightplan.toml` pins a workspace rather than a single repository, the
+same rule measures from the workspace directory instead, so paths are sent
+relative to it and carry the child repository's directory name. Values
+resolving outside the workspace are rejected the same way.
+
 ## The stop hook
 
 At session end, the hook installed at `.claude/hooks/flightplan_stop_hook.py`
@@ -43,7 +48,7 @@ unconfigured, it silently allows the session to end. It sends nothing else.
 
 | Location | Contents | Committed? |
 |---|---|---|
-| `.flightplan.toml` | The repo pin (a name, or an id plus a readable name) and registry URL. No secrets. | Yes, on purpose |
+| `.flightplan.toml` | The pin (a name, or an id plus a readable name — for a repository or a workspace) and registry URL. No secrets. | Yes, on purpose |
 | `CLAUDE.md` / `AGENTS.md` | The agent snippet, between managed markers | Yes |
 | `.claude/commands/registry-digest.md` | The `/registry-digest` command | Yes |
 | `.claude/hooks/flightplan_stop_hook.py` | The stop hook | Yes |

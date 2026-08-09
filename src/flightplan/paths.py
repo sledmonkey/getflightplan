@@ -25,9 +25,14 @@ The rules, in order:
     silently sent. A `..` segment anywhere past the first wildcard is rejected
     too: nothing resolves it there, so it would travel unchecked.
 
-Outside a git repository there is no bound root, nothing is rewritten, and
-nothing is rejected. Stdlib only — subprocess git and pathlib, no dependency
-beyond the thin client's own.
+The bound root is the git root, with one exception: under a project pin the
+caller passes the workspace root instead (the pin file's own directory — a
+workspace is not itself a git repo, so there would be no root at all). The
+rules above are unchanged, they just measure from there; see workspace.py.
+
+Outside a git repository, and with no root passed in, there is no bound root,
+nothing is rewritten, and nothing is rejected. Stdlib only — subprocess git and
+pathlib, no dependency beyond the thin client's own.
 """
 
 from __future__ import annotations
@@ -121,17 +126,21 @@ def normalize(value: str, root: Path, cwd: Path) -> str:
     return f"{rel}/{tail}" if tail else rel
 
 
-def normalize_all(values: list[str] | None) -> list[str] | None:
-    """Canonicalize a list of paths/globs.
+def normalize_all(
+    values: list[str] | None, root: Path | None = None
+) -> list[str] | None:
+    """Canonicalize a list of paths/globs against `root`, defaulting to the git
+    root. Callers pass a root only for a workspace, which has no git root.
 
     Raises OutsideRepository, naming every offending entry, if any of them
-    resolve outside the repository. Outside a git repo there is no root to
-    violate and the values pass through unchanged.
+    resolve outside the root. With no root at all — outside a git repo, nothing
+    passed in — there is nothing to violate and the values pass through
+    unchanged.
     """
     if not values:
         return values
     cwd = Path.cwd().resolve()
-    root = repo_root(cwd)
+    root = root or repo_root(cwd)
     if root is None:
         return list(values)
 

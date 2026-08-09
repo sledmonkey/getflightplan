@@ -16,6 +16,11 @@ SCRIPT = str(
     / "src" / "flightplan" / "install_assets" / "stop_hook.py"
 )
 
+PROJECT_PIN = (
+    'target = "project"\ntarget_id = "proj_5b71ee"\n'
+    'name = "flightplan"\nurl = "http://unused"\n'
+)
+
 
 def run_hook(stdin: dict, url: str, cwd: str) -> tuple[int, str]:
     proc = subprocess.run(
@@ -27,15 +32,21 @@ def run_hook(stdin: dict, url: str, cwd: str) -> tuple[int, str]:
     return proc.returncode, proc.stdout
 
 
-def stub_registry(intents: list[dict] | None, status: int = 200):
+def stub_registry(intents: list[dict] | None, status: int = 200, only_if=None):
     """A one-endpoint HTTP stub standing in for GET /intents. Records every
-    request path on `server.requests` so tests can assert what was queried."""
+    request path on `server.requests` so tests can assert what was queried.
+
+    `only_if` is a predicate over the request path: when given, the intents come
+    back only for a matching query, which is how a test stands in for a filter
+    the real registry applies.
+    """
     requests: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
-            body = json.dumps({"intents": intents or []}).encode()
+            found = intents if (only_if is None or only_if(self.path)) else []
+            body = json.dumps({"intents": found or []}).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -147,6 +158,34 @@ def test_pinned_id_is_sent_with_the_name(tmp_path):
     )
     assert any("repo=pinned-name" in path for path in requests)
     assert any("target_id=repo_9f3c2a" in path for path in requests)
+    # A repository pin asks exactly what it always asked: no subtree to widen to.
+    assert not any("subtree" in path for path in requests)
+
+
+def test_a_project_pin_asks_for_the_whole_subtree(tmp_path):
+    # A project id matches only intents posted at the project, and an exact
+    # filter would miss work demoted into a child repo. `subtree=1` widens it.
+    requests = _asks_under(tmp_path, PROJECT_PIN)
+    assert any("repo=flightplan" in path for path in requests)
+    assert any("target_id=proj_5b71ee" in path for path in requests)
+    assert any("subtree=1" in path for path in requests)
+
+
+def test_an_intent_demoted_into_a_child_repo_still_blocks(tmp_path):
+    # The case the subtree query exists for: this session's only open intent
+    # lives on a CHILD target, so the stub answers only the widened query. A
+    # hook that asked the narrow one would see nothing and lose the outcome.
+    (tmp_path / ".flightplan.toml").write_text(PROJECT_PIN)
+    server, url = stub_registry(
+        [{"id": "e" * 36, "author": "brad", "summary": "Work that landed in one child repo."}],
+        only_if=lambda path: "subtree=1" in path,
+    )
+    try:
+        code, out = run_hook({"stop_hook_active": False}, url, str(tmp_path))
+        assert code == 0
+        assert json.loads(out)["decision"] == "block"
+    finally:
+        server.shutdown()
 
 
 def test_hook_pin_parser_matches_the_package(tmp_path):
@@ -173,3 +212,5 @@ def test_hook_pin_parser_matches_the_package(tmp_path):
         from_hook = hook._toml_value(pin_file, "name") or hook._toml_value(pin_file, "repo")
         assert from_hook == expected.name
         assert hook._toml_value(pin_file, "target_id") == expected.target_id
+        # `target` too, now that it decides whether the check spans a subtree.
+        assert hook._toml_value(pin_file, "target") == expected.target

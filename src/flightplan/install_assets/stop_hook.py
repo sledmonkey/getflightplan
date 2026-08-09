@@ -20,6 +20,10 @@ Config chain (all advisory, degrade to allowing the stop):
     lands on this repo even if the readable name has drifted, and never on a
     different repo that happens to share the name. The name is still sent, for
     a registry that predates the id.
+  - subtree: added to the query under a project pin (`target = "project"`),
+    which widens the check to the project's child repositories — work demoted
+    into one of them is still this session's to close. A registry that predates
+    the param ignores it and answers as before.
   - url:  FLIGHTPLAN_URL env → `url = "..."` from that same toml. No url →
     allow the stop.
   - key:  FLIGHTPLAN_API_KEY env → FLIGHTPLAN_API_KEY from
@@ -119,21 +123,29 @@ def repo_name() -> str:
     return Path.cwd().name
 
 
-def pinned_target_id() -> str | None:
-    """The id from the pin file, when the repo has one. None on the older
+def pinned_target() -> tuple[str | None, str | None]:
+    """What the pin points at: (target, target_id). Both None on the older
     name-only pin, and on repos the installer hasn't touched."""
     toml = _find_toml()
-    return _toml_value(toml, "target_id") if toml is not None else None
+    if toml is None:
+        return None, None
+    return _toml_value(toml, "target"), _toml_value(toml, "target_id")
 
 
 def active_intents(
-    url: str, key: str, repo: str, target_id: str | None = None
+    url: str, key: str, repo: str,
+    target_id: str | None = None, subtree: bool = False,
 ) -> list[dict]:
     params = {"repo": repo, "status": "active", "limit": 20}
     if target_id:
         # Sent next to the name, not instead of it: a registry that predates
         # the id ignores it and still filters by name.
         params["target_id"] = target_id
+        if subtree:
+            # A project id matches only intents posted AT the project. Work
+            # that landed in one child repo is stored on that repo's target, so
+            # without this the session's own open intent looks like none.
+            params["subtree"] = 1
     query = urllib.parse.urlencode(params)
     req = urllib.request.Request(
         f"{url.rstrip('/')}/intents?{query}",
@@ -154,8 +166,9 @@ def main() -> int:
     cfg = config()
     if cfg is None:
         return 0
+    target, target_id = pinned_target()
     try:
-        intents = active_intents(*cfg, repo_name(), pinned_target_id())
+        intents = active_intents(*cfg, repo_name(), target_id, target == "project")
     except Exception:
         return 0  # advisory: an unreachable registry never traps a session
     if not intents:

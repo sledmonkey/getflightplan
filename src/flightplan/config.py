@@ -1,7 +1,7 @@
-"""The `.flightplan.toml` pin — one parser, two shapes.
+"""The `.flightplan.toml` pin — one parser, three shapes.
 
 The committed pin file is what makes every agent on a repo post under the same
-thing. Two shapes are read:
+thing. Three shapes are read:
 
     repo = "coolproject"                     # a readable name only
     url = "https://api.getflightplan.com"
@@ -11,9 +11,16 @@ thing. Two shapes are read:
     name = "coolproject"
     url = "https://api.getflightplan.com"
 
-The second shape is written only when an id is already pinned; the installer
-never invents one. Both shapes stay supported, so this module is the single
-place that knows how to read either.
+    target = "project"                       # a workspace of several repos
+    target_id = "proj_5b71ee"
+    name = "coolproject rewrite"
+    url = "https://api.getflightplan.com"
+
+The pinned shapes are written only when an id is already pinned; the installer
+never invents one. The third sits on a workspace directory whose children are
+the repos — same fields, and what changes is how the client reads paths under
+it (workspace.py). All three stay supported, so this module is the single place
+that knows how to read any of them.
 
 Parsed with a tolerant line regex, not tomllib: the vendored stop hook runs
 under whatever `python3` is on PATH and carries its own copy of this logic, so

@@ -250,13 +250,24 @@ def test_pinned_id_rerun_is_idempotent(tmp_path):
 
 
 def test_project_target_survives_too(tmp_path):
+    # A workspace pin binds several repos (workspace.py) and is not the
+    # installer's to reshape: reinstalling must not rewrite it to a repo/name
+    # shape, re-derive the name, or invent an id.
     (tmp_path / ".flightplan.toml").write_text(
         'target = "project"\ntarget_id = "proj_5b71ee"\nname = "coolproject rewrite"\n'
         'url = "https://registry.example"\n'
     )
     install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
-    pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
+
+    text = (tmp_path / ".flightplan.toml").read_text()
+    pin = config.read_pin(text)
     assert (pin.target, pin.target_id) == ("project", "proj_5b71ee")
+    assert pin.name == "coolproject rewrite"
+    assert pin.url == "https://registry.example"
+    assert "repo = " not in text
+
+    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    assert statuses[".flightplan.toml"] == "unchanged"
 
 
 def test_repo_flag_renames_but_keeps_the_id(tmp_path):

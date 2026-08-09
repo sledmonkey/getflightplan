@@ -14,18 +14,29 @@ path or glob is canonicalized to repo-relative before it goes on the wire. A
 path that resolves outside the repository is refused rather than sent — see
 paths.py.
 
+A project pin (`target = "project"`) adds a third thing, still invisible to the
+agent: paths are canonicalized against the workspace root and then mapped back
+to the child repositories pinned under it (workspace.py). Work that lands in
+exactly one child posts as an ordinary repository intent — same target, same
+repo-local paths an agent inside that repo would send. Work that spans more
+posts under the project and carries a `repositories` field: the same paths,
+split per repository, so cross-repository collision checks still line up. That
+field is the only wire addition; every other pin shape sends what it always
+sent.
+
 Env: FLIGHTPLAN_URL, FLIGHTPLAN_API_KEY.
 """
 
 import os
 import uuid
+from pathlib import Path
 from typing import Annotated, Literal
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from . import config, paths
+from . import config, paths, workspace
 
 # One MCP server process ≈ one agent session; good enough for the spec's
 # "agent session id if available".
@@ -93,15 +104,22 @@ async def _call(method: str, path: str, **kwargs) -> dict:
     return resp.json()
 
 
-def _pin() -> config.Pin:
-    """The nearest `.flightplan.toml` pin, read fresh.
+def _binding() -> tuple[config.Pin, workspace.Workspace | None]:
+    """The nearest `.flightplan.toml` pin, read fresh, plus the workspace it
+    binds when it is a project pin (None for every other shape).
 
     Read from the pin file only — the client never asks the service to turn a
     name into an id. The pin wins over whatever an agent passes as `repo`: a
     stale name derived by an agent that never read the pin would otherwise
     route somewhere else.
     """
-    return config.find_pin()
+    return workspace.bind()
+
+
+def _root(ws: workspace.Workspace | None) -> Path | None:
+    """What paths are canonicalized against: the workspace root under a project
+    pin, otherwise None, which leaves paths.py to find the git root."""
+    return ws.root if ws else None
 
 
 def _rejected(exc: paths.OutsideRepository) -> dict:
@@ -114,6 +132,111 @@ def _rejected(exc: paths.OutsideRepository) -> dict:
             "the ones that live outside this repository."
         ),
     }
+
+
+def _target_id_of(payload: dict) -> str | None:
+    """The target id out of a fetched intent, tolerating either a bare intent
+    object or one inside an envelope. None means we could not read it."""
+    if not isinstance(payload, dict) or "error" in payload:
+        return None
+    inner = payload.get("intent")
+    intent = inner if isinstance(inner, dict) else payload
+    target_id = intent.get("target_id") if isinstance(intent, dict) else None
+    return target_id if isinstance(target_id, str) else None
+
+
+def _route_post(body: dict, ws: workspace.Workspace, touches: list[str] | None) -> None:
+    """Aim a workspace post at the right target, editing `body` in place.
+
+    Work that lands in one repository is ordinary repository work that happened
+    to start from the workspace root, so it posts as exactly that — nothing on
+    the wire says a workspace was involved. Anything wider stays a project post
+    and carries the split, so each repository's own agents still match against
+    it. Values that belong to no repository (root files, pure patterns) are why
+    a post stays project-scoped, and they travel only in `touches`.
+    """
+    mapped, unmapped = ws.group(touches)
+    if len(mapped) == 1 and not unmapped:
+        child = ws.children[next(iter(mapped))]
+        body["repo"] = child.name or body["repo"]
+        body["target_id"] = child.target_id
+        body["touches"] = next(iter(mapped.values()))
+    elif mapped:
+        body["repositories"] = ws.split(touches, "touches")
+
+
+async def _route_patch(
+    id: str,
+    body: dict,
+    ws: workspace.Workspace,
+    field: str,
+    values: list[str],
+) -> dict:
+    """Send a workspace patch under whatever the intent is actually bound to.
+
+    The client keeps no state, so it cannot know whether this intent was posted
+    as project work or demoted into one repository — it asks. The difference
+    matters: a demoted intent stores repo-local paths, and workspace-relative
+    ones would quietly never match it.
+
+    An empty `values` list is a real edit, not a no-op: it flows through as an
+    empty repo-local list, or as `repositories: []` for a project intent, which
+    is how the registry learns the old per-repository split is gone.
+    """
+    fetched = await _call("GET", f"/intents/{id}")
+    target_id = _target_id_of(fetched)
+    if target_id is None:
+        detail = fetched.get("error") if isinstance(fetched, dict) else None
+        return {
+            "error": (
+                f"could not read intent {id}, so this update could not be aimed "
+                "at the right repository" + (f": {detail}" if detail else ".")
+            ),
+            "advice": (
+                "Nothing was sent. Check the id you were given at post time. The "
+                "registry is advisory — proceed with your work either way."
+            ),
+        }
+
+    child = ws.child_by_id(target_id)
+    if child is not None:
+        local: list[str] = []
+        outside: list[str] = []
+        for value in values:
+            child_dir, rewritten = ws.map_value(value)
+            if child_dir == child.dir:
+                local.append(rewritten)
+            else:
+                outside.append(value)
+        if outside:
+            return {
+                "error": (
+                    f"this intent is recorded in {child.name or child.dir}, and "
+                    "these values are outside it: " + ", ".join(outside) + "."
+                ),
+                "advice": (
+                    "Nothing was sent. Re-send only what is under "
+                    f"{child.dir}/, or post a separate intent for the work in "
+                    "the other repositories."
+                ),
+            }
+        body[field] = local
+        return await _call("PATCH", f"/intents/{id}", json=body)
+
+    if target_id != ws.pin.target_id:
+        return {
+            "error": (
+                f"intent {id} belongs to {target_id}, which is neither this "
+                "workspace nor a repository pinned under it."
+            ),
+            "advice": (
+                "Nothing was sent. Run the update from the repository the "
+                "intent was posted in."
+            ),
+        }
+
+    body["repositories"] = ws.split(values, field)
+    return await _call("PATCH", f"/intents/{id}", json=body)
 
 
 @mcp.tool(
@@ -156,14 +279,14 @@ async def post_intent(
         Field(description="Short headline for the work, ≤80 chars, like a commit subject line (e.g. 'FTS5 search + recall mode'). Cheap to write and the feed reads far better with one — provide it."),
     ] = None,
 ) -> dict:
+    # The pin decides what this posts under: its id when there is one, and its
+    # readable name in `repo` either way.
+    pin, ws = _binding()
     try:
-        touches = paths.normalize_all(touches)
+        touches = paths.normalize_all(touches, _root(ws))
     except paths.OutsideRepository as e:
         return _rejected(e)
 
-    # The pin decides what this posts under: its id when there is one, and its
-    # readable name in `repo` either way.
-    pin = _pin()
     body: dict = {
         "repo": pin.name or repo,
         "summary": summary,
@@ -178,6 +301,10 @@ async def post_intent(
         body["outcome"] = outcome
     if title is not None:
         body["title"] = title
+    # A decision is a record, not work: it never collides, so it is never
+    # demoted and never split — it stays at the workspace it was decided in.
+    if ws is not None and kind != "decision":
+        _route_post(body, ws, touches)
     return await _call("POST", "/intents", json=body)
 
 
@@ -241,18 +368,23 @@ async def list_intents(
         ),
     ] = "all",
 ) -> dict:
-    try:
-        overlaps = paths.normalize_all(overlaps)
-    except paths.OutsideRepository as e:
-        return _rejected(e)
-
-    params: dict = {"my_kind": my_kind, "limit": limit}
     # Reads are not routed like posts. `repo` is passed through exactly as the
     # agent asked — naming another repository is a legitimate history query.
     # The pinned id is added only when the query names this checkout's own
     # repo, where it is pure precision. No repo, no filter: the query stays as
     # broad as it was written.
-    pin = _pin()
+    #
+    # Known gap under a project pin: a query scoped to the workspace sees
+    # project-scoped intents only, so the pre-planning check here can miss work
+    # posted inside a child repository. The post path does the full
+    # cross-repository check, which is where a real collision surfaces.
+    pin, ws = _binding()
+    try:
+        overlaps = paths.normalize_all(overlaps, _root(ws))
+    except paths.OutsideRepository as e:
+        return _rejected(e)
+
+    params: dict = {"my_kind": my_kind, "limit": limit}
     if repo:
         params["repo"] = repo
         if pin.target_id and repo == pin.name:
@@ -307,8 +439,9 @@ async def update_intent(
     branch: Annotated[str | None, Field(description="Git branch, if it has changed.")] = None,
     title: Annotated[str | None, Field(description="Revised short headline, ≤80 chars.")] = None,
 ) -> dict:
+    _, ws = _binding()
     try:
-        touches = paths.normalize_all(touches)
+        touches = paths.normalize_all(touches, _root(ws))
     except paths.OutsideRepository as e:
         return _rejected(e)
 
@@ -323,6 +456,11 @@ async def update_intent(
         body["branch"] = branch
     if title is not None:
         body["title"] = title
+    # An OMITTED list skips routing, so the common TTL heartbeat still costs one
+    # request. An explicit empty list is a real edit — it clears the touches, and
+    # must route so the per-repository split is cleared with them.
+    if ws is not None and touches is not None:
+        return await _route_patch(id, body, ws, "touches", touches)
     return await _call("PATCH", f"/intents/{id}", json=body)
 
 
@@ -361,8 +499,9 @@ async def complete_intent(
         Field(description="True if ANY of the work is not yet committed (untracked/unstaged/staged-only). This flag escalates collision warnings for other agents. False = all committed. Omit if unknown."),
     ] = None,
 ) -> dict:
+    _, ws = _binding()
     try:
-        files = paths.normalize_all(files)
+        files = paths.normalize_all(files, _root(ws))
     except paths.OutsideRepository as e:
         return _rejected(e)
 
@@ -375,7 +514,11 @@ async def complete_intent(
     # when explicitly passed so the registry records the confirmed state.
     if uncommitted is not None:
         body["uncommitted"] = uncommitted
-    result = await _call("PATCH", f"/intents/{id}", json=body)
+    # Same rule as update_intent: omitted skips routing, explicit empty routes.
+    if ws is not None and files is not None:
+        result = await _route_patch(id, body, ws, "files", files)
+    else:
+        result = await _call("PATCH", f"/intents/{id}", json=body)
     # Advisory thin-outcome nudge (M3 item 15). Appended to the response on the
     # client side — the server already accepted the outcome, this never blocks.
     # Only for done: abandoned outcomes are legitimately brief by design.

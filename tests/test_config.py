@@ -4,6 +4,8 @@ functions against a stub registry, so they check what actually gets sent."""
 
 from urllib.parse import parse_qs, urlparse
 
+import pytest
+
 from flightplan import config, mcp_server
 
 LEGACY = (
@@ -107,6 +109,28 @@ def test_project_pin_posts_target_id(tmp_path, monkeypatch, registry, call):
     monkeypatch.chdir(tmp_path)
     body = _post(call, registry, tmp_path, repo="coolproject rewrite")
     assert body["target_id"] == "proj_5b71ee"
+
+
+@pytest.mark.parametrize("pin_text", [LEGACY, REPOSITORY, ""])
+def test_only_a_project_pin_changes_the_wire(pin_text, tmp_path, monkeypatch, registry, call):
+    # The compatibility bar for project pins (workspace.py): every other shape
+    # sends exactly what it sent before — no `repositories` field, and no extra
+    # lookup before a patch.
+    if pin_text:
+        (tmp_path / config.PIN_FILENAME).write_text(pin_text)
+    monkeypatch.chdir(tmp_path)
+
+    call(mcp_server.post_intent(repo="coolproject", summary="s", touches=["src/a.py"]))
+    call(mcp_server.update_intent(id="3f1a", touches=["src/a.py"]))
+    call(mcp_server.complete_intent(
+        id="3f1a", status="done", outcome="o", files=["src/a.py"],
+    ))
+
+    assert registry.paths == ["/intents", "/intents/3f1a", "/intents/3f1a"]
+    assert [b.get("touches") or b.get("files") for b in registry.bodies] == [
+        ["src/a.py"], ["src/a.py"], ["src/a.py"],
+    ]
+    assert all("repositories" not in body for body in registry.bodies)
 
 
 def test_no_pin_posts_without_target_id(tmp_path, monkeypatch, registry, call):
