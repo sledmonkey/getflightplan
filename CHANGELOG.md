@@ -4,7 +4,7 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [unreleased]
+## [0.9.2] — 2026-08-09
 
 ### Added
 - `.flightplan.toml` accepts a second shape: `target`/`target_id` plus a
