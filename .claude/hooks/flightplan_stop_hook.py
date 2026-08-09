@@ -10,9 +10,16 @@ Stop entry written into `.claude/settings.json`:
         "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/flightplan_stop_hook.py\""}]}]}}
 
 Config chain (all advisory, degrade to allowing the stop):
-  - repo: `repo = "..."` from the nearest `.flightplan.toml` (cwd, then each
-    parent) → git origin basename → cwd name. The pin comes first so every agent
-    on this repo — and this hook — ask about the one name intents were posted under.
+  - repo: the readable name from the nearest `.flightplan.toml` (cwd, then each
+    parent) — `name = "..."`, else the older `repo = "..."` — then git origin
+    basename, then cwd name. The pin comes first so every agent on this repo —
+    and this hook — ask about the one name intents were posted under. This
+    mirrors `flightplan/config.py`; the two must agree. It is duplicated
+    because this file runs standalone under whatever `python3` is on PATH.
+  - target_id: sent alongside the name when the pin carries one, so the check
+    lands on this repo even if the readable name has drifted, and never on a
+    different repo that happens to share the name. The name is still sent, for
+    a registry that predates the id.
   - url:  FLIGHTPLAN_URL env → `url = "..."` from that same toml. No url →
     allow the stop.
   - key:  FLIGHTPLAN_API_KEY env → FLIGHTPLAN_API_KEY from
@@ -90,10 +97,14 @@ def config() -> tuple[str, str] | None:
 def repo_name() -> str:
     """The name intents were posted under: the toml pin first, else the old
     derivation (git origin basename, else cwd name) for repos the installer
-    hasn't touched yet."""
+    hasn't touched yet.
+
+    Either pin shape works — `name` alongside a pinned id, or the older bare
+    `repo` key.
+    """
     toml = _find_toml()
     if toml is not None:
-        pinned = _toml_value(toml, "repo")
+        pinned = _toml_value(toml, "name") or _toml_value(toml, "repo")
         if pinned:
             return pinned
     try:
@@ -108,8 +119,22 @@ def repo_name() -> str:
     return Path.cwd().name
 
 
-def active_intents(url: str, key: str, repo: str) -> list[dict]:
-    query = urllib.parse.urlencode({"repo": repo, "status": "active", "limit": 20})
+def pinned_target_id() -> str | None:
+    """The id from the pin file, when the repo has one. None on the older
+    name-only pin, and on repos the installer hasn't touched."""
+    toml = _find_toml()
+    return _toml_value(toml, "target_id") if toml is not None else None
+
+
+def active_intents(
+    url: str, key: str, repo: str, target_id: str | None = None
+) -> list[dict]:
+    params = {"repo": repo, "status": "active", "limit": 20}
+    if target_id:
+        # Sent next to the name, not instead of it: a registry that predates
+        # the id ignores it and still filters by name.
+        params["target_id"] = target_id
+    query = urllib.parse.urlencode(params)
     req = urllib.request.Request(
         f"{url.rstrip('/')}/intents?{query}",
         headers={"Authorization": f"Bearer {key}"},
@@ -130,7 +155,7 @@ def main() -> int:
     if cfg is None:
         return 0
     try:
-        intents = active_intents(*cfg, repo_name())
+        intents = active_intents(*cfg, repo_name(), pinned_target_id())
     except Exception:
         return 0  # advisory: an unreachable registry never traps a session
     if not intents:

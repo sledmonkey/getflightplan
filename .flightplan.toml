@@ -1,4 +1,5 @@
-# Managed by getflightplan install. Committed on purpose: pins the repo name
-# every agent on this repo must post intents under. No secrets belong here.
+# Managed by getflightplan install. Committed on purpose: it pins what every
+# agent on this repo posts intents under — either a `repo` name, or a
+# `target_id` plus a readable `name`. No secrets belong here.
 repo = "getflightplan"
 url = "https://api.getflightplan.com"

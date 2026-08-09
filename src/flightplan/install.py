@@ -3,9 +3,11 @@
 One idempotent command, shipped in the same uvx-distributed package as the MCP
 client, that installs/updates every per-repo artifact the registry needs:
 
-  - `.flightplan.toml` — pins the repo name every agent posts under (fixes
-    the observed drift where an agent posted under "Code" because it derived the
-    name from a parent directory) plus the registry url. Committed on purpose.
+  - `.flightplan.toml` — pins what every agent posts under (fixes the observed
+    drift where an agent posted under "Code" because it derived the name from a
+    parent directory) plus the registry url. Committed on purpose. Two shapes,
+    both read by `config.py`: a `repo` name, or a `target_id` with a readable
+    `name`. A pinned id is preserved verbatim across runs, never invented here.
   - the agent snippet, dropped into `CLAUDE.md` (Claude Code) and/or `AGENTS.md`
     (Codex) between managed markers, with the repo name pinned into it.
   - the `/registry-digest` command and the session-end stop hook (Claude Code),
@@ -35,6 +37,8 @@ import tomllib
 import urllib.request
 from pathlib import Path
 from typing import NamedTuple
+
+from . import config
 
 # The service's public default. An existing pin or --url flag overrides it
 # (precedence in `_resolve`).
@@ -126,13 +130,6 @@ def _snippet_block(repo: str | None) -> str:
 # Name / url resolution
 # --------------------------------------------------------------------------- #
 
-def _toml_value(text: str, key: str) -> str | None:
-    """`key = "value"` out of a .flightplan.toml, tolerant regex (no
-    tomllib dependency, matches the stop hook's parser)."""
-    m = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"([^"]+)"', re.M).search(text)
-    return m.group(1) if m else None
-
-
 def _derive_repo(root: Path) -> str:
     """Git origin basename, else the root directory name — the same rule agents
     used before the pin existed."""
@@ -149,16 +146,26 @@ def _derive_repo(root: Path) -> str:
     return root.name
 
 
-def _resolve(root: Path, repo: str | None, url: str | None) -> tuple[str, str]:
-    """Resolve the pinned name and url, honouring the precedence in the spec.
+class Resolved(NamedTuple):
+    """What the pin file should say after this run."""
+    name: str
+    url: str
+    target: str | None
+    target_id: str | None
+
+
+def _resolve(root: Path, repo: str | None, url: str | None) -> Resolved:
+    """Resolve what to pin, honouring the precedence in the spec.
 
     Name: `--repo` flag → existing pin (never silently change one) → derive.
     Url:  `--url` flag → existing pin → FLIGHTPLAN_URL env → the public default.
+    Id:   whatever is already pinned, verbatim. The installer never mints,
+          changes, or drops an id — only the flow that pins one may do that.
 
     A pre-rename repo has its pin in `.intent-registry.toml`; honour it as the
     existing pin so an upgrade migrates the name/url instead of re-deriving.
     """
-    toml_path = root / ".flightplan.toml"
+    toml_path = root / config.PIN_FILENAME
     legacy_path = root / LEGACY_PIN_REL
     if toml_path.exists():
         existing = toml_path.read_text()
@@ -166,14 +173,39 @@ def _resolve(root: Path, repo: str | None, url: str | None) -> tuple[str, str]:
         existing = legacy_path.read_text()
     else:
         existing = ""
-    name = repo or _toml_value(existing, "repo") or _derive_repo(root)
+    pin = config.read_pin(existing)
+    name = repo or pin.name or _derive_repo(root)
     resolved_url = (
         url
-        or _toml_value(existing, "url")
+        or pin.url
         or os.environ.get("FLIGHTPLAN_URL", "").strip()
         or DEFAULT_URL
     )
-    return name, resolved_url
+    return Resolved(name, resolved_url, pin.target, pin.target_id)
+
+
+# The header on the generated pin file — one text for both shapes.
+_PIN_HEADER = (
+    "# Managed by getflightplan install. Committed on purpose: it pins what every\n"
+    "# agent on this repo posts intents under — either a `repo` name, or a\n"
+    "# `target_id` plus a readable `name`. No secrets belong here.\n"
+)
+
+
+def _pin_file(resolved: Resolved) -> str:
+    """Render the pin file. An already-pinned id keeps its shape, including the
+    `target` line and the readable name; everything else keeps the name-only
+    shape. Nothing here ever invents an id."""
+    if resolved.target_id:
+        lines = []
+        if resolved.target:
+            lines.append(f'target = "{resolved.target}"')
+        lines.append(f'target_id = "{resolved.target_id}"')
+        lines.append(f'name = "{resolved.name}"')
+    else:
+        lines = [f'repo = "{resolved.name}"']
+    lines.append(f'url = "{resolved.url}"')
+    return _PIN_HEADER + "\n".join(lines) + "\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -292,16 +324,12 @@ def run(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
 
-    name, resolved_url = _resolve(root, repo, url)
+    resolved = _resolve(root, repo, url)
+    name = resolved.name
 
-    # 1. The pin file — fully managed, regenerated each run.
-    write(
-        ".flightplan.toml",
-        "# Managed by getflightplan install. Committed on purpose: pins the repo name\n"
-        "# every agent on this repo must post intents under. No secrets belong here.\n"
-        f'repo = "{name}"\n'
-        f'url = "{resolved_url}"\n',
-    )
+    # 1. The pin file — fully managed, regenerated each run, but a pinned id
+    #    survives the regeneration untouched.
+    write(config.PIN_FILENAME, _pin_file(resolved))
     # Migration (ROADMAP 35): the pre-rename pin is superseded by the file just
     # written — remove it so the repo doesn't carry two pin files.
     legacy_pin = root / LEGACY_PIN_REL
@@ -827,7 +855,7 @@ def main(argv: list[str] | None = None) -> int:
     for w in warnings:
         print(f"  !!   {w}")
 
-    _, resolved_url = _resolve(root, args.repo, args.url)
+    resolved_url = _resolve(root, args.repo, args.url).url
     print("verify:")
     for line in verify(root, agent=args.agent, url=resolved_url, source=args.source):
         print(line)

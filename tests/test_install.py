@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from flightplan import install
+from flightplan import config, install
 
 GIT_ROOT = Path(__file__).resolve().parents[1]
 PKG_DIR = GIT_ROOT  # flat public layout: README lives at the repo root
@@ -210,6 +210,82 @@ def test_custom_url_pinned(tmp_path):
     install.run(tmp_path, agent="claude", repo="r", url="https://intents.example.com",
                 dry_run=False)
     assert 'url = "https://intents.example.com"' in (tmp_path / ".flightplan.toml").read_text()
+
+
+# --- The pin file: a pinned id survives regeneration ---
+
+_PINNED = (
+    "# hand-written header the installer will replace\n"
+    'target = "repository"\n'
+    'target_id = "repo_9f3c2a"\n'
+    'name = "coolproject"\n'
+    'url = "https://registry.example"\n'
+)
+
+
+def test_pinned_id_survives_regeneration(tmp_path):
+    # The managed file is rewritten every run; an id already in it must come
+    # through untouched, along with the target kind and the readable name.
+    _git_init(tmp_path, "https://github.com/acme/somethingelse.git")
+    (tmp_path / ".flightplan.toml").write_text(_PINNED)
+
+    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+
+    pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
+    assert pin.target == "repository"
+    assert pin.target_id == "repo_9f3c2a"
+    assert pin.name == "coolproject"          # not re-derived from the origin
+    assert pin.url == "https://registry.example"
+    assert "somethingelse" not in (tmp_path / ".flightplan.toml").read_text()
+
+
+def test_pinned_id_rerun_is_idempotent(tmp_path):
+    (tmp_path / ".flightplan.toml").write_text(_PINNED)
+    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    first = (tmp_path / ".flightplan.toml").read_text()
+
+    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    assert statuses[".flightplan.toml"] == "unchanged"
+    assert (tmp_path / ".flightplan.toml").read_text() == first
+
+
+def test_project_target_survives_too(tmp_path):
+    (tmp_path / ".flightplan.toml").write_text(
+        'target = "project"\ntarget_id = "proj_5b71ee"\nname = "coolproject rewrite"\n'
+        'url = "https://registry.example"\n'
+    )
+    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
+    assert (pin.target, pin.target_id) == ("project", "proj_5b71ee")
+
+
+def test_repo_flag_renames_but_keeps_the_id(tmp_path):
+    # `--repo` sets the readable name. The id is not the installer's to change.
+    (tmp_path / ".flightplan.toml").write_text(_PINNED)
+    install.run(tmp_path, agent="claude", repo="renamed", url=None, dry_run=False)
+    pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
+    assert pin.name == "renamed"
+    assert pin.target_id == "repo_9f3c2a"
+
+
+def test_legacy_pin_keeps_the_legacy_shape(tmp_path):
+    _git_init(tmp_path, "https://github.com/acme/coolproject.git")
+    (tmp_path / ".flightplan.toml").write_text(
+        'repo = "pinned-team-name"\nurl = "https://registry.example"\n'
+    )
+    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+
+    text = (tmp_path / ".flightplan.toml").read_text()
+    assert 'repo = "pinned-team-name"' in text
+    pin = config.read_pin(text)
+    assert (pin.name, pin.target, pin.target_id) == ("pinned-team-name", None, None)
+
+
+def test_fresh_install_never_invents_an_id(tmp_path):
+    _git_init(tmp_path, "https://github.com/acme/coolproject.git")
+    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
+    assert pin.target_id is None and pin.target is None
 
 
 # --- Interactive onboarding (decision 2bdbf56c): main()-level, TTY-gated ---
@@ -789,7 +865,7 @@ def test_readme_contains_manual_snippet():
 def test_root_claude_md_contains_pinned_snippet():
     # The pinned name comes from the repo's own pin file, not a hardcode — the
     # drift test survives a deliberate re-pin.
-    pin = install._toml_value((GIT_ROOT / ".flightplan.toml").read_text(), "repo")
+    pin = config.read_pin((GIT_ROOT / ".flightplan.toml").read_text()).name
     assert pin, "repo pin missing from .flightplan.toml"
     assert install.render_snippet(pin) in (GIT_ROOT / "CLAUDE.md").read_text()
 

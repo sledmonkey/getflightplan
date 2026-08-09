@@ -111,16 +111,65 @@ def test_missing_config_allows_stop(tmp_path):
     assert proc.returncode == 0 and proc.stdout.strip() == ""
 
 
+def _asks_under(tmp_path, pin_text: str) -> list[str]:
+    """Run the hook against a stub with the given pin file in place; return the
+    request paths so a test can see which name it asked about."""
+    (tmp_path / ".flightplan.toml").write_text(pin_text)
+    server, url = stub_registry([{"id": "d" * 36, "author": "brad", "summary": "s"}])
+    try:
+        code, _out = run_hook({"stop_hook_active": False}, url, str(tmp_path))
+        assert code == 0
+        return list(server.requests)
+    finally:
+        server.shutdown()
+
+
 def test_pinned_repo_name_from_toml(tmp_path):
     # A .flightplan.toml pin (cwd or any parent) is what the hook asks
     # under — the whole point of the install kit is that every agent agrees.
-    (tmp_path / ".flightplan.toml").write_text(
-        '# pinned by the installer\nrepo = "pinned-name"\nurl = "http://unused"\n'
+    # Nothing to add on the older shape: name only.
+    requests = _asks_under(
+        tmp_path,
+        '# pinned by the installer\nrepo = "pinned-name"\nurl = "http://unused"\n',
     )
-    server, url = stub_registry([{"id": "d" * 36, "author": "brad", "summary": "s"}])
-    try:
-        code, out = run_hook({"stop_hook_active": False}, url, str(tmp_path))
-        assert code == 0
-        assert any("repo=pinned-name" in path for path in server.requests)
-    finally:
-        server.shutdown()
+    assert any("repo=pinned-name" in path for path in requests)
+    assert not any("target_id" in path for path in requests)
+
+
+def test_pinned_id_is_sent_with_the_name(tmp_path):
+    # The newer shape carries the id next to the readable name. The hook sends
+    # both: the id so a drifted name can't point the check at the wrong repo,
+    # the name so a registry that predates the id still filters.
+    requests = _asks_under(
+        tmp_path,
+        'target = "repository"\ntarget_id = "repo_9f3c2a"\n'
+        'name = "pinned-name"\nurl = "http://unused"\n',
+    )
+    assert any("repo=pinned-name" in path for path in requests)
+    assert any("target_id=repo_9f3c2a" in path for path in requests)
+
+
+def test_hook_pin_parser_matches_the_package(tmp_path):
+    # The hook ships standalone (system python3, no imports from the package),
+    # so it carries its own copy of the pin logic. The two must not drift.
+    import importlib.util
+
+    from flightplan import config
+
+    spec = importlib.util.spec_from_file_location("_hook", SCRIPT)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+
+    samples = [
+        'repo = "legacy"\nurl = "http://u"\n',
+        'target = "repository"\ntarget_id = "repo_1"\nname = "newer"\nurl = "http://u"\n',
+        'target = "project"\ntarget_id = "proj_1"\nname = "a project"\n',
+        'repo = "old"\nname = "new"\n',
+    ]
+    for text in samples:
+        pin_file = tmp_path / ".flightplan.toml"
+        pin_file.write_text(text)
+        expected = config.read_pin(text)
+        from_hook = hook._toml_value(pin_file, "name") or hook._toml_value(pin_file, "repo")
+        assert from_hook == expected.name
+        assert hook._toml_value(pin_file, "target_id") == expected.target_id

@@ -24,6 +24,14 @@ Two things worth being explicit about:
 The registry only learns what your agent chooses to put into a summary,
 outcome, or glob pattern.
 
+Paths and globs (`touches`, `files`, `overlaps`) are rewritten to
+repository-relative form before they are sent, so an absolute path an agent
+happened to type — which would carry your home directory and machine layout —
+does not leave as one. Inside a repository, a value that resolves outside it
+(an absolute path elsewhere on the machine, or `../` traversal escaping the
+root) is rejected by the client: the request is not sent, and the agent is told
+to use repository-relative paths instead.
+
 ## The stop hook
 
 At session end, the hook installed at `.claude/hooks/flightplan_stop_hook.py`
@@ -35,7 +43,7 @@ unconfigured, it silently allows the session to end. It sends nothing else.
 
 | Location | Contents | Committed? |
 |---|---|---|
-| `.flightplan.toml` | Repo name and registry URL. No secrets. | Yes, on purpose |
+| `.flightplan.toml` | The repo pin (a name, or an id plus a readable name) and registry URL. No secrets. | Yes, on purpose |
 | `CLAUDE.md` / `AGENTS.md` | The agent snippet, between managed markers | Yes |
 | `.claude/commands/registry-digest.md` | The `/registry-digest` command | Yes |
 | `.claude/hooks/flightplan_stop_hook.py` | The stop hook | Yes |
