@@ -646,15 +646,64 @@ def _key_config_file() -> Path:
     return Path.home() / ".config" / "flightplan" / "env"
 
 
+def _env_file_lines(path: Path) -> list[str]:
+    """The lines of the env file, or an empty list. An unreadable file counts
+    as an empty one — the caller writes a new file over it."""
+    try:
+        return path.read_text().splitlines()
+    except OSError:
+        return []
+
+
+def _write_env_lines(path: Path, lines: list[str]) -> None:
+    """Replace the env file with `lines`, atomically and with mode 600.
+
+    The secret is never in a world-readable file, not even for an instant: the
+    temporary file gets mode 600 before any content goes in, and `os.replace`
+    then moves it over the target in one step. A reader sees the old file or
+    the new one, never a half-written one.
+    """
+    temporary = path.with_name(path.name + ".tmp")
+    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(handle, "w") as stream:
+            stream.write("".join(f"{line}\n" for line in lines))
+        os.chmod(temporary, 0o600)  # O_CREAT skips the mode on a leftover file
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def _write_key_file(key: str) -> Path:
     """Persist the key to ~/.config/flightplan/env (mode 600, dir 700) so
-    the stop hook can find it. Returns the path; never echoes the key."""
+    the stop hook can find it. Any other line in the file stays. Returns the
+    path; never echoes the key."""
     env_file = _key_config_file()
     env_file.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(env_file.parent, 0o700)  # explicit: mkdir won't chmod a pre-existing dir
-    env_file.write_text(f"FLIGHTPLAN_API_KEY={key}\n")
-    os.chmod(env_file, 0o600)
+    others = [
+        line for line in _env_file_lines(env_file)
+        if not line.startswith("FLIGHTPLAN_API_KEY=")
+    ]
+    _write_env_lines(env_file, [*others, f"FLIGHTPLAN_API_KEY={key}"])
     return env_file
+
+
+def _remove_key_line() -> bool:
+    """Drop the FLIGHTPLAN_API_KEY line from ~/.config/flightplan/env. Every
+    other line stays, and the file keeps mode 600. Returns True if a key was
+    there to remove."""
+    env_file = _key_config_file()
+    lines = _env_file_lines(env_file)
+    kept = [line for line in lines if not line.startswith("FLIGHTPLAN_API_KEY=")]
+    if len(kept) == len(lines):
+        return False
+    _write_env_lines(env_file, kept)
+    return True
 
 
 def _read_key_file() -> str:
