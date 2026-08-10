@@ -149,8 +149,8 @@ def discover(root: Path) -> dict[str, Child]:
         try:
             if not pin_file.is_file():
                 continue
-            pin = config.read_pin(pin_file.read_text())
-        except OSError:
+            pin = config.read_pin(pin_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
             continue
         if pin.target == "repository" and pin.target_id:
             children[d.name] = Child(d.name, pin.target_id, pin.name)
@@ -168,8 +168,8 @@ def bind(start: Path | None = None) -> tuple[config.Pin, Workspace | None]:
     if path is None:
         return config.EMPTY, None
     try:
-        pin = config.read_pin(path.read_text())
-    except OSError:
+        pin = config.read_pin(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
         return config.EMPTY, None
     if pin.target != "project":
         return pin, None

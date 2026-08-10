@@ -867,6 +867,80 @@ def test_codex_missing_env_is_stale(tmp_path, monkeypatch):
     assert "no FLIGHTPLAN_URL set" in reg.detail
 
 
+# --- TOML string escaping (names come from the service, not from us) ---
+
+def test_toml_string_quotes_plain_text():
+    assert install._toml_string("widgets") == '"widgets"'
+
+
+def test_toml_string_escapes_quotes_and_backslashes():
+    assert install._toml_string('a"b') == '"a\\"b"'
+    assert install._toml_string("a\\b") == '"a\\\\b"'
+    # A backslash in front of a quote must not escape our escape.
+    assert install._toml_string('a\\"b') == '"a\\\\\\"b"'
+
+
+def test_toml_string_drops_control_characters():
+    assert install._toml_string("a\nb\tc\x00d\x7fe") == '"abcde"'
+    assert install._toml_string("plain\x1b[2Ktext") == '"plain[2Ktext"'
+
+
+def test_toml_string_drops_c1_controls_and_bidi_overrides():
+    # U+009B is a one-character CSI: an escape sequence with no ESC byte.
+    # Hostile characters are written as escapes on purpose.
+    assert install._toml_string("a\u009b2Kb") == '"a2Kb"'
+    assert install._toml_string("a\u202eb\u202cc") == '"abc"'
+    assert install._toml_string("a\u2066b\u2069c") == '"abc"'
+    assert install._toml_string("a\u061cb\u200ec\u200fd") == '"abcd"'
+
+
+def test_the_unsafe_set_covers_every_cc_character():
+    """The pattern uses explicit ranges, so prove they are exactly category
+    Cc — plus the bidi set — rather than trusting the comment beside them."""
+    import unicodedata
+
+    cc = {c for c in map(chr, range(0x110000)) if unicodedata.category(c) == "Cc"}
+    bidi = {
+        chr(c)
+        for c in [
+            0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A),
+        ]
+    }
+    actual = {
+        c for c in map(chr, range(0x110000)) if install._UNSAFE_CHARS.fullmatch(c)
+    }
+    assert actual == cc | bidi
+
+
+def test_the_unsafe_set_keeps_ordinary_text():
+    for text in ("café", "日本語のリポジトリ", "Ünïcodé — v2", "emoji 🚀", "a b"):
+        assert install._toml_string(text) == f'"{text}"'
+
+
+def test_toml_string_output_is_one_line_and_parses():
+    import tomllib
+
+    hostile = 'evil"\nurl = "https://attacker.test'
+    line = f"name = {install._toml_string(hostile)}"
+    assert "\n" not in line
+    parsed = tomllib.loads(line)
+    assert list(parsed) == ["name"]          # no second key was injected
+    assert parsed["name"] == 'evil"url = "https://attacker.test'
+
+
+def test_write_pin_target_escapes_every_value(tmp_path):
+    import tomllib
+
+    install.write_pin_target(
+        tmp_path, target="repository", target_id='id"1', name='a"\nb',
+    )
+    parsed = tomllib.loads(
+        (tmp_path / config.PIN_FILENAME).read_text(encoding="utf-8")
+    )
+    assert parsed["target_id"] == 'id"1'
+    assert parsed["name"] == 'a"b'
+
+
 # --- Drift tests against THIS repo (pass only after the installer runs here) ---
 
 def test_readme_contains_manual_snippet():

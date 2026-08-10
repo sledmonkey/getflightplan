@@ -85,6 +85,9 @@ def find_pin(start: Path | None = None) -> Pin:
     if path is None:
         return EMPTY
     try:
-        return read_pin(path.read_text())
-    except OSError:
+        # UTF-8 explicitly: TOML is UTF-8 by specification, and a pinned
+        # repository name can hold any text. Letting the locale decide makes
+        # an accented name unreadable under `LC_ALL=C`.
+        return read_pin(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
         return EMPTY

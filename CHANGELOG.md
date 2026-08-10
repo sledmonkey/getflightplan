@@ -4,6 +4,56 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0] — 2026-08-09
+
+### Added
+- `getflightplan login` now finds this repository in the registry. The command
+  runs the check after it stores the credential. The check cannot fail the
+  login. If the check has a problem, the command prints one line, and the
+  login still succeeds. Use `--no-register` to skip the check.
+- The check sends two git facts: the address of the `origin` remote, and up to
+  1000 commit ids from `HEAD` backwards. The service normalizes the address,
+  so two forms of the same address are one repository. The commit ids prove
+  that you have a clone. The client sends no other git data.
+- If your account has access to the repository, the client writes the id and
+  the name to `.flightplan.toml`. The client keeps every other line in that
+  file, and it keeps the comments. The write is atomic.
+- If the registry does not know the repository, the client asks you to
+  register it. On yes, the command opens a page in your browser and shows the
+  address as well. Then it waits until you finish. If the code expires, the
+  command tells you to try again.
+- If the registry knows the repository, but your account has no access, the
+  client asks you to request access. If the repository is invite only, the
+  service answers with the reason, and the client prints it.
+- A pending request gets a notice. Your work is recorded privately, under your
+  personal account. Shared collision checks and shared context from the
+  repository are not available. Approval changes your future posts only.
+- `getflightplan register` runs the same check on its own. Use it after a
+  login that you skipped, or to try again. The command needs a stored
+  credential. Without one, it tells you to run `getflightplan login`.
+- A shallow clone gets a warning. A shallow clone holds only part of the
+  history, so the check can miss a registration that already exists.
+- The check is skipped in three conditions. The pin file already holds an id.
+  A project pin covers the folder. Or the folder has no git origin remote.
+- The client cleans the names it gets from the service. An owner chooses the
+  name of a repository, so the name is text from a different person. The
+  client removes the control characters before it prints the name, so the
+  name cannot change what you see in your terminal. The client also removes a
+  double quote and a backslash before it writes the name to
+  `.flightplan.toml`, so the name cannot add a key to that file. Every value
+  in the pin file is escaped as well. The client removes every character in
+  the Unicode category Cc. This includes the C1 controls, because U+009B can
+  start an escape sequence on its own. The client also removes the bidi
+  overrides, U+202A to U+202E and U+2066 to U+2069, because they change the
+  order the text is drawn in. Usual text stays as it is. Accents, CJK, and
+  emoji are correct in a name.
+
+### Changed
+- The client reads and writes `.flightplan.toml` as UTF-8. TOML is UTF-8 by
+  specification. Before, the locale of the machine decided the encoding, so a
+  name with an accent in it stopped the command on a machine with the C
+  locale.
+
 ## [0.12.0] — 2026-08-09
 
 ### Added
