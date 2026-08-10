@@ -19,9 +19,13 @@ page to open. The client then polls `{url}/auth/device` until you approve.
 This flow is also the automatic fallback. The client changes to it when the
 listener cannot bind, or when the browser launcher fails.
 
-After the credential is stored, the login looks for this repository in the
-registry and offers to register it (register.py). That step can fail without
-failing the login: the credential is already stored. `--no-register` skips it.
+After the credential is stored, the login finishes the MCP setup and looks
+for this repository in the registry (register.py). Install cannot register
+the MCP server while the machine has no credential, and the login is the
+moment one appears — completing it here is what keeps onboarding at two
+commands: install, then login (decision bcdc4caa). Neither step can fail the
+login: the credential is already stored. `--no-register` skips the
+repository check.
 
 The credential goes to `~/.config/flightplan/env` with mode 600 — the file
 that already holds the API key, so the MCP server and the stop hook find it
@@ -375,6 +379,26 @@ def run_browser(url: str, verifier: str, challenge: str, label: str, sleep=time.
 # CLI
 # --------------------------------------------------------------------------- #
 
+def register_mcp(url: str, source: str = install.PACKAGE_SOURCE) -> None:
+    """Finish the MCP registration, right after the credential is stored.
+
+    Install cannot register while the machine has no credential. The login is
+    when one appears, so the registration runs here too — that is what keeps
+    onboarding at two commands (decision bcdc4caa). No prompts, credential
+    from the env file only (decision 72315903); agents whose binary is absent
+    are skipped inside the registrar. Nothing here may fail the login: every
+    error becomes one printed line.
+    """
+    try:
+        if install._register_agents(
+            install._repo_root(), agent="both", url=url, source=source,
+        ):
+            print("  →    start a new agent session in this repo to pick up "
+                  "the registration.")
+    except Exception as err:
+        print(f"FlightPlan could not set up the MCP registration ({err}).")
+
+
 def find_repository(url: str, *, headless: bool, sleep=time.sleep) -> None:
     """Find or register the repository, right after the credential is stored.
 
@@ -410,6 +434,11 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
         "--no-register", action="store_true",
         help="do not look for this repository after the login",
     )
+    parser.add_argument(
+        "--source", default=install.PACKAGE_SOURCE,
+        help="what the MCP registration runs (default: the PyPI package; "
+        "pass a git URL or a local path for development)",
+    )
     args = parser.parse_args(argv)
 
     url = resolve_url(args.url)
@@ -422,8 +451,10 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
         print(str(err))
         return 1
 
-    if code == 0 and not args.no_register:
-        find_repository(url, headless=args.headless, sleep=sleep)
+    if code == 0:
+        register_mcp(url, source=args.source)
+        if not args.no_register:
+            find_repository(url, headless=args.headless, sleep=sleep)
     return code
 
 

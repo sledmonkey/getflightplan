@@ -25,14 +25,12 @@ from an installed wheel, not just the source tree.
 from __future__ import annotations
 
 import argparse
-import getpass
 import importlib.resources as resources
 import json
 import os
 import re
 import shutil
 import subprocess
-import sys
 import tomllib
 import urllib.request
 from pathlib import Path
@@ -517,6 +515,9 @@ class Registration(NamedTuple):
     status: str          # CURRENT | STALE | MISSING
     name: str | None     # the key it was registered under
     detail: str          # the command line it runs, for reporting
+    entry: dict | None = None  # the raw config entry, kept so a failed
+                               # replacement can put it back; never printed
+    scope: str | None = None   # Claude: project, local, or user
 
 
 # NAME=VALUE argv tokens whose value must never be echoed. A legacy entry like
@@ -528,18 +529,26 @@ def _redact(tokens: list[str]) -> list[str]:
     return [_SECRET_TOKEN.sub(r"\1=[redacted]", t) for t in tokens]
 
 
-def _classify(entry: object, name: str, source: str, url: str) -> Registration:
+def _classify(
+    entry: object, name: str, source: str, url: str, key: str | None = None,
+    scope: str | None = None,
+) -> Registration:
     """CURRENT only if the entry runs exactly the argv we would register, under
-    the branded name, with FLIGHTPLAN_URL set to `url`.
+    the branded name, with FLIGHTPLAN_URL set to `url` — and, when `key` is
+    given, with that credential embedded.
 
     The whole argv is compared against `_uvx_argv(source)` — the single source of
     truth — so a missing or wrong subcommand (`uvx getflightplan`,
     `uvx getflightplan install`) is caught too. A hand-written equivalent like
     `uvx --from getflightplan getflightplan mcp` reads STALE; that's fine, STALE
     is an advisory nudge plus a re-register offer, not an error.
+
+    The credential check is what makes a login rotation propagate: after a new
+    token lands in the env file, an entry still carrying the old one (or none)
+    reads STALE and gets replaced. The values are compared, never reported.
     """
     if not isinstance(entry, dict):
-        return Registration(STALE, name, "unrecognized entry")
+        return Registration(STALE, name, "unrecognized entry", scope=scope)
     command = str(entry.get("command") or "")
     raw_args = entry.get("args") or []
     args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
@@ -550,45 +559,80 @@ def _classify(entry: object, name: str, source: str, url: str) -> Registration:
         and [Path(command).stem, *args] == _uvx_argv(source)
     )
     if not argv_ok:
-        return Registration(STALE, name, detail)
+        return Registration(STALE, name, detail, entry, scope)
 
     # Argv is right — now the url. Never report the API key, only the url.
     env = entry.get("env")
     found_url = env.get("FLIGHTPLAN_URL") if isinstance(env, dict) else None
     if found_url != url:
         where = f"registered URL {found_url}" if found_url else "no FLIGHTPLAN_URL set"
-        return Registration(STALE, name, f"{detail} ({where}, expected {url})")
-    return Registration(CURRENT, name, detail)
+        return Registration(
+            STALE, name, f"{detail} ({where}, expected {url})", entry, scope,
+        )
+
+    if key is not None:
+        found_key = env.get("FLIGHTPLAN_API_KEY") if isinstance(env, dict) else None
+        if found_key != key:
+            return Registration(
+                STALE, name, f"{detail} (a different credential)", entry, scope,
+            )
+    return Registration(CURRENT, name, detail, entry, scope)
 
 
-def _claude_registration(root: Path, source: str, url: str) -> Registration:
+def _claude_registration(
+    root: Path, source: str, url: str, key: str | None = None,
+) -> Registration:
     """Find the MCP server entry in root .mcp.json, or in ~/.claude.json under
-    the top-level mcpServers or any per-project mcpServers, and classify it.
+    the top-level mcpServers or this checkout's per-project mcpServers, and
+    classify it while retaining its project/local/user scope for repairs.
     The branded name wins; the legacy `intent-registry` name is looked up second
     so a pre-rename install reads as stale rather than missing."""
-    blocks: list[dict] = []
-    for path in (root / ".mcp.json", Path.home() / ".claude.json"):
-        if not path.exists():
-            continue
+    blocks: list[tuple[dict, str]] = []
+
+    project_file = root / ".mcp.json"
+    if project_file.exists():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(project_file.read_text())
         except Exception:
-            continue
-        if not isinstance(data, dict):
-            continue
-        blocks.append(data.get("mcpServers") or {})
-        for proj in (data.get("projects") or {}).values():
-            if isinstance(proj, dict):
-                blocks.append(proj.get("mcpServers") or {})
+            data = None
+        if isinstance(data, dict):
+            blocks.append((data.get("mcpServers") or {}, "project"))
+
+    user_file = Path.home() / ".claude.json"
+    if user_file.exists():
+        try:
+            data = json.loads(user_file.read_text())
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            blocks.append((data.get("mcpServers") or {}, "user"))
+
+            # Local registrations are keyed by absolute project path. Only
+            # inspect this checkout: another project's entry must never be
+            # selected and mutated from here.
+            wanted = root.resolve()
+            projects = data.get("projects") or {}
+            if isinstance(projects, dict):
+                for project_path, project in projects.items():
+                    if not isinstance(project, dict):
+                        continue
+                    try:
+                        is_current = Path(project_path).resolve() == wanted
+                    except (OSError, TypeError):
+                        is_current = False
+                    if is_current:
+                        blocks.append((project.get("mcpServers") or {}, "local"))
 
     for name in ("flightplan", LEGACY_SERVER_NAME):
-        for servers in blocks:
+        for servers, scope in blocks:
             if isinstance(servers, dict) and name in servers:
-                return _classify(servers[name], name, source, url)
+                return _classify(servers[name], name, source, url, key, scope)
     return Registration(MISSING, None, "")
 
 
-def _codex_registration(source: str, url: str) -> Registration:
+def _codex_registration(
+    source: str, url: str, key: str | None = None,
+) -> Registration:
     """Same for ~/.codex/config.toml, parsed as TOML. If the file won't parse we
     can't read the source, so a server table under either name counts as stale
     rather than crashing the run."""
@@ -614,7 +658,7 @@ def _codex_registration(source: str, url: str) -> Registration:
     if isinstance(servers, dict):
         for name in ("flightplan", LEGACY_SERVER_NAME):
             if name in servers:
-                return _classify(servers[name], name, source, url)
+                return _classify(servers[name], name, source, url, key)
     return Registration(MISSING, None, "")
 
 
@@ -633,6 +677,9 @@ def verify(
     anything; never prints a secret value. `source` is what a registration must
     run to count as current — the default, or whatever `--source` asked for."""
     lines: list[str] = []
+    # With a stored credential, an entry carrying a different one reads STALE
+    # below; with none, the credential cannot be checked.
+    key = _read_key_file() or None
 
     ok, endpoint = _reachable(url)
     lines.append(
@@ -643,7 +690,7 @@ def verify(
     )
 
     if agent in ("claude", "both"):
-        reg = _claude_registration(root, source, url)
+        reg = _claude_registration(root, source, url, key)
         if reg.status == CURRENT:
             lines.append("  ok   claude: flightplan MCP server is registered")
         elif reg.name == LEGACY_SERVER_NAME:
@@ -663,6 +710,14 @@ def verify(
                 "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
                 f"-- {_uvx_command(source)}"
             )
+        elif not shutil.which("claude"):
+            # The login skips absent binaries, so do not promise it here.
+            lines.append(
+                "  ..   claude: Claude Code is not on this machine — skipped"
+            )
+        elif key is None:
+            # Expected mid-onboarding: the login registers it. Not an error.
+            lines.append("  ..   claude: not connected yet — the login does this")
         else:
             lines.append(
                 "  !!   claude: flightplan MCP server not found in .mcp.json "
@@ -677,14 +732,12 @@ def verify(
             lines.append("  ok   stop hook: an API key source is available")
         else:
             lines.append(
-                "  !!   stop hook: no API key found (FLIGHTPLAN_API_KEY env "
-                "or ~/.config/flightplan/env) — the hook "
-                "will silently allow stops until one exists; put your key in "
-                "~/.config/flightplan/env as FLIGHTPLAN_API_KEY=..."
+                "  ..   stop hook: waiting for a credential — the login "
+                "stores one"
             )
 
     if agent in ("codex", "both"):
-        reg = _codex_registration(source, url)
+        reg = _codex_registration(source, url, key)
         args = ", ".join(f'"{a}"' for a in _uvx_argv(source)[1:])
         block = (
             "         [mcp_servers.flightplan]\n"
@@ -704,6 +757,11 @@ def verify(
                 f"  ok?  codex: flightplan is registered but {where}. "
                 f"Replace it in ~/.codex/config.toml with:\n{block}"
             )
+        elif not shutil.which("codex"):
+            lines.append("  ..   codex: Codex is not on this machine — skipped")
+        elif key is None:
+            # Same as the claude line: pending, not broken.
+            lines.append("  ..   codex: not connected yet — the login does this")
         else:
             lines.append(
                 "  !!   codex: flightplan not found in ~/.codex/config.toml — "
@@ -714,15 +772,15 @@ def verify(
 
 
 # --------------------------------------------------------------------------- #
-# Interactive onboarding (decision 2bdbf56c)
+# Promptless registration (decision 72315903, superseding 2bdbf56c)
 # --------------------------------------------------------------------------- #
 #
-# The one-command onboarding: prompt once for the API key and fan it out to
-# the places that need it (the stop-hook env file and the agent MCP
-# registrations, claude and codex). This layer lives outside `run()` — run() stays pure and
-# testable — and is only reached from `main()` when attached to a real TTY with
-# `--no-input` absent. Secrets are never echoed: not the key, not any command
-# line carrying it, not subprocess output.
+# The credential has one home: the env file that `getflightplan login`
+# writes. Registration reads that file only — never the environment, which
+# held stale tokens during rotation — and asks nothing: the user invoked a
+# command whose stated job is registration. This layer lives outside `run()`
+# so run() stays pure and testable. Secrets are never echoed: not the key,
+# not any command line carrying it, not subprocess output.
 
 # The manual-registration lines printed when we can't (or won't) auto-register.
 
@@ -834,12 +892,14 @@ def _read_key_file() -> str:
     return ""
 
 
-def _run_claude_register(url: str, key: str, source: str) -> bool:
+def _run_claude_register(
+    url: str, key: str, source: str, *, scope: str = "user",
+) -> bool:
     """`claude mcp add` for the flightplan server, no shell. Returns success by
     exit code only. The argv carries the key, so we never print the command and
     suppress the child's stdout/stderr rather than risk echoing it back."""
     cmd = [
-        "claude", "mcp", "add", "flightplan", "--scope", "user",
+        "claude", "mcp", "add", "flightplan", "--scope", scope,
         "--env", f"FLIGHTPLAN_URL={url}",
         "--env", f"FLIGHTPLAN_API_KEY={key}",
         "--", *_uvx_argv(source),
@@ -872,87 +932,103 @@ def _run_codex_register(url: str, key: str, source: str) -> bool:
         return False
 
 
-def _mcp_remove(binary: str, name: str) -> None:
+def _mcp_remove(binary: str, name: str, *, scope: str | None = None) -> None:
     """Drop an existing registration before re-adding it: `mcp add` on a name
     that already exists is an error in some CLI versions, and a legacy-named
-    entry has to go anyway. Failure is fine — the add is what matters."""
+    entry has to go anyway. Claude removal stays in the scope where the entry
+    was found. Failure is fine — the add is what matters."""
     cmd = [binary, "mcp", "remove", name]
-    if binary == "claude":
-        cmd += ["--scope", "user"]
+    if binary == "claude" and scope:
+        cmd += ["--scope", scope]
     try:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
 
-def _offer_to_fix(root: Path, *, agent: str, url: str, source: str) -> None:
-    """Interactive fixes for whatever verify found missing. The key is asked
-    for at most once (env → the saved key file → prompt); registration is
-    offered per agent with a default of yes — the user invoked an installer
-    whose stated job includes registration — and after any mutation the checks
-    are re-run so the user sees the verified end state. Caller guards the
-    TTY/--no-input/--dry-run preconditions."""
-    # One key, three sources in order; the prompt fires at most once.
-    key = os.environ.get("FLIGHTPLAN_API_KEY", "").strip() or _read_key_file()
+def _restore_registration(binary: str, reg: Registration) -> bool:
+    """Put back the entry `_mcp_remove` dropped, after a failed replacement.
+
+    Best effort: the add argv is rebuilt from the stored raw entry and original
+    scope (command, args, env — the env may hold the old credential, so the
+    command is never printed and the child's output is suppressed, like every
+    register call). Any failure is just False; the manual guidance already
+    covers that case.
+    """
+    entry = reg.entry
+    if not (reg.name and isinstance(entry, dict)):
+        return False
+    command = str(entry.get("command") or "")
+    if not command:
+        return False
+    cmd = [binary, "mcp", "add", reg.name]
+    if binary == "claude":
+        cmd += ["--scope", reg.scope or "user"]
+    env = entry.get("env")
+    if isinstance(env, dict):
+        for k, v in env.items():
+            cmd += ["--env", f"{k}={v}"]
+    raw_args = entry.get("args") or []
+    args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
+    cmd += ["--", command, *args]
+    try:
+        proc = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _register_agents(root: Path, *, agent: str, url: str, source: str) -> bool:
+    """Register the flightplan MCP server for the requested agents, without
+    prompts. The credential comes from the env file only, and an entry
+    carrying a different credential counts as stale — that is how a login
+    rotation reaches the registration. An agent whose binary is absent is
+    skipped silently; a missing or stale registration is fixed in place.
+    Returns True when anything changed — the caller reports the end state
+    (install prints verify after this runs, so repairs come before the
+    report)."""
+    key = _read_key_file()
     if not key:
-        entered = getpass.getpass(
-            "FlightPlan API key (from your team admin; blank to skip): "
-        ).strip()
-        if entered:
-            _write_key_file(entered)
-            print("  written  ~/.config/flightplan/env")
-            key = entered
+        return False
 
     mutated = False
 
-    def offer(name: str, reg: Registration, register, guidance: str) -> None:
-        """One registration offer: run it on yes (the default), fall back to
-        the manual guidance on decline, failure, or a missing binary. A stale
-        registration gets the same offer, worded as a replacement."""
+    def fix(name: str, reg: Registration, guidance: str) -> None:
         nonlocal mutated
-        if reg.status == CURRENT:
+        if reg.status == CURRENT or not shutil.which(name):
             return
-        stale = reg.status == STALE
-        if stale:
-            print(f"  ok?  {name}: existing registration runs {reg.detail}")
-        verb = "Re-register" if stale else "Register"
-        if shutil.which(name) and key:
-            answer = input(
-                f"{verb} the flightplan MCP server with {name} now? [Y/n] "
-            ).strip().lower()
-            if answer in ("", "y", "yes"):
-                if stale and reg.name:
-                    _mcp_remove(name, reg.name)
-                if register(url, key, source):
-                    print(f"  registered  flightplan MCP server ({name})")
-                    mutated = True
-                else:
-                    print(f"  !!   {name} mcp add failed — do it by hand:")
-                    print(guidance)
-            else:
-                print(guidance)
-        elif not shutil.which(name):
+        removed = False
+        if reg.status == STALE:
+            print(f"  ok?  {name}: existing registration runs {reg.detail} "
+                  "— replacing")
+            if reg.name:
+                _mcp_remove(name, reg.name, scope=reg.scope)
+                removed = True
+        registered = (
+            _run_claude_register(
+                url, key, source, scope=reg.scope or "user",
+            )
+            if name == "claude"
+            else _run_codex_register(url, key, source)
+        )
+        if registered:
+            print(f"  registered  flightplan MCP server ({name})")
+            mutated = True
+        else:
+            print(f"  !!   {name} mcp add failed — do it by hand:")
             print(guidance)
-        # else: binary present but still no key — can't register; verify's
-        # guidance line already covered the manual path.
+            if removed and _restore_registration(name, reg):
+                print(f"  →    the previous {name} registration was put back")
 
     if agent in ("claude", "both"):
-        offer(
-            "claude",
-            _claude_registration(root, source, url),
-            _run_claude_register,
-            _claude_guidance(source),
-        )
+        fix("claude", _claude_registration(root, source, url, key),
+            _claude_guidance(source))
     if agent in ("codex", "both"):
-        offer("codex", _codex_registration(source, url), _run_codex_register,
-              _codex_guidance(source))
-
-    if mutated:
-        print("re-verify:")
-        for line in verify(root, agent=agent, url=url, source=source):
-            print(line)
-        print("  →    start a new agent session in this repo to pick up the "
-              "registration.")
+        fix("codex", _codex_registration(source, url, key),
+            _codex_guidance(source))
+    return mutated
 
 
 # --------------------------------------------------------------------------- #
@@ -989,10 +1065,6 @@ def main(argv: list[str] | None = None) -> int:
         help="compute and report statuses, write nothing",
     )
     parser.add_argument(
-        "--no-input", action="store_true",
-        help="never prompt (for CI / non-interactive use)",
-    )
-    parser.add_argument(
         "--source", default=PACKAGE_SOURCE,
         help="what the registered MCP server runs (default: the PyPI package "
         "`getflightplan`; pass a git URL or a local path for development, and "
@@ -1018,14 +1090,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  !!   {w}")
 
     resolved_url = _resolve(root, args.repo, args.url).url
+
+    # Repair before reporting (decision 72315903): registration runs first,
+    # without prompts, so the verify block below describes the state the user
+    # is actually left in — never a problem the very next step fixes.
+    # Skipped on a dry run; with no credential it is a no-op.
+    mutated = False
+    if not args.dry_run:
+        mutated = _register_agents(
+            root, agent=args.agent, url=resolved_url, source=args.source,
+        )
+
     print("verify:")
     for line in verify(root, agent=args.agent, url=resolved_url, source=args.source):
         print(line)
+    if mutated:
+        print("  →    start a new agent session in this repo to pick up the "
+              "registration.")
 
-    # Interactive one-command onboarding — offer to fill what verify flagged.
-    # Only when we're actually attached to a terminal and allowed to prompt.
-    if sys.stdin.isatty() and not args.no_input and not args.dry_run:
-        _offer_to_fix(root, agent=args.agent, url=resolved_url, source=args.source)
+    # With no credential on the machine, name the next step — install cannot
+    # register the MCP server without one, and login both stores the
+    # credential and finishes that registration (decision bcdc4caa).
+    if not _read_key_file():
+        print("next:")
+        print(
+            "  →    uvx getflightplan login — connect your account in the "
+            "browser; it finishes the MCP setup"
+        )
 
     return 0
 

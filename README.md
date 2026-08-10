@@ -23,7 +23,9 @@ uvx getflightplan install
 ```
 
 That installs FlightPlan for Claude Code. For Codex, append
-`--agent codex`. The command is safe to re-run.
+`--agent codex` (or `--agent both`). The command is safe to re-run.
+The first time on a machine, run `uvx getflightplan login` next — it
+connects your account and finishes the MCP setup.
 
 The hosted service is in private beta; request access at
 [getflightplan.com](https://getflightplan.com). The package is on PyPI, so the
@@ -54,8 +56,9 @@ Version and compatibility policy: [docs/versioning.md](docs/versioning.md).
 - A session-end stop hook (`.claude/hooks/flightplan_stop_hook.py` plus its
   settings wiring) that reminds the agent to close out open intents.
 
-It also checks MCP registration and service reachability, then offers to
-configure anything missing. Verification is advisory and never fails the run.
+It also checks MCP registration and service reachability, and repairs the
+registration when the machine has a credential — no prompts. Verification is
+advisory and never fails the run.
 
 To remove everything the installer wrote, run `getflightplan uninstall` from
 the repo root (`--dry-run` to preview, `--purge-key` to also delete the saved
@@ -66,6 +69,9 @@ API key).
 `getflightplan login` gets a credential without a copied API key. It opens
 your browser, you approve there, and the credential goes to
 `~/.config/flightplan/env` with mode 600. The credential is never printed.
+After the credential is stored, login also registers the MCP server for
+the agent binaries on your machine — the step install has to skip while
+the machine has no credential.
 
 On a machine with no browser, run `getflightplan login --headless`. The
 command shows a short code and an address. Open that address on another

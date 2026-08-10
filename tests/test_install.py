@@ -299,7 +299,7 @@ def test_fresh_install_never_invents_an_id(tmp_path):
     assert pin.target_id is None and pin.target is None
 
 
-# --- Interactive onboarding (decision 2bdbf56c): main()-level, TTY-gated ---
+# --- Promptless registration (decision 72315903): main()-level ---
 
 # A stand-in key; declared once so tests compare against the variable and never
 # print a literal that looks like a real secret.
@@ -311,7 +311,7 @@ def _offline(monkeypatch):
     monkeypatch.setattr(install, "_reachable", lambda url: (False, url + "/healthz"))
 
 
-def test_interactive_key_prompt_writes_env_file(tmp_path, monkeypatch):
+def test_no_credential_points_to_login(tmp_path, monkeypatch, capsys):
     home = tmp_path / "home"
     home.mkdir()
     repo = tmp_path / "repo"
@@ -322,43 +322,27 @@ def test_interactive_key_prompt_writes_env_file(tmp_path, monkeypatch):
     monkeypatch.delenv("FLIGHTPLAN_API_KEY", raising=False)
     monkeypatch.delenv("FLIGHTPLAN_URL", raising=False)
     _offline(monkeypatch)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
-    # No `claude` binary → the registration offer is skipped (no subprocess).
-    monkeypatch.setattr(install.shutil, "which", lambda _cmd: None)
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
 
     assert install.main([]) == 0
 
-    env_file = home / ".config" / "flightplan" / "env"
-    assert env_file.exists()
-    assert (env_file.stat().st_mode & 0o777) == 0o600
-    assert (env_file.parent.stat().st_mode & 0o777) == 0o700
-    assert env_file.read_text() == f"FLIGHTPLAN_API_KEY={_FAKE_KEY}\n"
-
-
-def test_no_input_flag_never_prompts(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git_init(repo)
-    monkeypatch.chdir(repo)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("FLIGHTPLAN_API_KEY", raising=False)
-    _offline(monkeypatch)
-
-    def boom(*a, **k):
-        raise AssertionError("must not prompt")
-
-    monkeypatch.setattr(install.getpass, "getpass", boom)
-    monkeypatch.setattr("builtins.input", boom)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)  # a TTY, but --no-input wins
-
-    assert install.main(["--no-input"]) == 0
+    out = capsys.readouterr().out
+    assert "next:" in out
+    assert "uvx getflightplan login" in out
+    # The pending state reads as progress, not as errors: short ".." lines,
+    # no manual mcp-add dump, no loud markers on the login-fixable findings.
+    assert "..   claude: not connected yet" in out
+    assert "..   stop hook: waiting for a credential" in out
+    assert "!!   claude" not in out
+    assert "!!   stop hook" not in out
+    assert "claude mcp add" not in out
+    # No credential was invented, and nothing prompted for one.
     assert not (home / ".config" / "flightplan" / "env").exists()
 
 
-def test_non_tty_never_prompts(tmp_path, monkeypatch):
+def test_nothing_ever_prompts(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     repo = tmp_path / "repo"
@@ -372,9 +356,8 @@ def test_non_tty_never_prompts(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("must not prompt")
 
-    monkeypatch.setattr(install.getpass, "getpass", boom)
     monkeypatch.setattr("builtins.input", boom)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)  # piped / CI
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)  # a TTY changes nothing
 
     assert install.main([]) == 0
 
@@ -396,7 +379,8 @@ def test_legacy_name_shows_reregister_nudge(tmp_path, monkeypatch):
 
 
 def _onboard_repo(tmp_path, monkeypatch):
-    """A tmp repo + tmp HOME wired for the interactive onboarding path, offline."""
+    """A tmp repo + tmp HOME with a saved credential, offline — the state a
+    machine is in after `getflightplan login`."""
     home = tmp_path / "home"
     home.mkdir()
     repo = tmp_path / "repo"
@@ -407,7 +391,7 @@ def _onboard_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("FLIGHTPLAN_API_KEY", raising=False)
     monkeypatch.delenv("FLIGHTPLAN_URL", raising=False)
     _offline(monkeypatch)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    install._write_key_file(_FAKE_KEY)  # under the monkeypatched HOME
     return home, repo
 
 
@@ -434,8 +418,6 @@ def _mcp_adds(calls) -> list[list[str]]:
 
 def test_claude_registration_uses_package_source(tmp_path, monkeypatch):
     _onboard_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")  # [Y/n] default = yes
     monkeypatch.setattr(
         install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
     )
@@ -455,8 +437,6 @@ def test_claude_registration_uses_package_source(tmp_path, monkeypatch):
 def test_custom_source_keeps_from(tmp_path, monkeypatch):
     # A development source still needs `uvx --from`.
     _onboard_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
     monkeypatch.setattr(
         install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
     )
@@ -469,8 +449,6 @@ def test_custom_source_keeps_from(tmp_path, monkeypatch):
 
 def test_codex_registration_uses_package_source(tmp_path, monkeypatch):
     _onboard_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
     monkeypatch.setattr(
         install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "codex" else None
     )
@@ -485,43 +463,41 @@ def test_codex_registration_uses_package_source(tmp_path, monkeypatch):
     assert f"FLIGHTPLAN_URL={install.DEFAULT_URL}" in cmd
 
 
-def test_saved_key_enables_later_registration(tmp_path, monkeypatch):
-    # A previous install (say, --agent codex) saved the key; env is empty. The
-    # later claude install must reuse the saved key, not re-prompt or bail.
+def test_env_var_never_feeds_registration(tmp_path, monkeypatch):
+    # Rotation safety (decision 72315903): a stale token in the environment
+    # must not reach the registration; the env file the login wrote wins.
     _onboard_repo(tmp_path, monkeypatch)
-    install._write_key_file(_FAKE_KEY)  # under the monkeypatched HOME
-
-    def boom(*a, **k):
-        raise AssertionError("must not prompt for a key that is already saved")
-
-    monkeypatch.setattr(install.getpass, "getpass", boom)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+    monkeypatch.setenv("FLIGHTPLAN_API_KEY", "fp-stale-env-token")
     monkeypatch.setattr(
         install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
     )
     calls = _capture_subprocess(monkeypatch)
 
     assert install.main(["--url", install.DEFAULT_URL]) == 0
-    adds = _mcp_adds(calls)
-    assert len(adds) == 1
-    assert f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in adds[0]
+    cmd = _mcp_adds(calls)[0]
+    assert f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in cmd
+    assert "FLIGHTPLAN_API_KEY=fp-stale-env-token" not in cmd
 
 
-def test_agent_both_prompts_for_key_once_and_registers_both(tmp_path, monkeypatch):
+def test_non_tty_still_registers(tmp_path, monkeypatch):
+    # CI / piped stdin is not special: the registration has no prompts.
     _onboard_repo(tmp_path, monkeypatch)
-    prompts: list[int] = []
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
 
-    def fake_getpass(*a, **k):
-        prompts.append(1)
-        return _FAKE_KEY
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    assert [c[0] for c in _mcp_adds(calls)] == ["claude"]
 
-    monkeypatch.setattr(install.getpass, "getpass", fake_getpass)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+
+def test_agent_both_registers_both(tmp_path, monkeypatch):
+    _onboard_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(install.shutil, "which", lambda cmd: f"/bin/{cmd}")
     calls = _capture_subprocess(monkeypatch)
 
     assert install.main(["--agent", "both", "--url", install.DEFAULT_URL]) == 0
-    assert len(prompts) == 1
     assert [c[0] for c in _mcp_adds(calls)] == ["claude", "codex"]
 
 
@@ -540,19 +516,62 @@ def test_published_guidance_uses_bare_uvx(tmp_path, monkeypatch):
     assert install.PACKAGE_SOURCE == "getflightplan"
 
 
-def test_reverify_after_registration(tmp_path, monkeypatch, capsys):
-    _onboard_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+def test_absent_binary_reads_skipped(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _offline(monkeypatch)
+    monkeypatch.setattr(install.shutil, "which", lambda _cmd: None)
+
+    text = "\n".join(install.verify(tmp_path, agent="both", url=install.DEFAULT_URL))
+    assert "claude: Claude Code is not on this machine — skipped" in text
+    assert "codex: Codex is not on this machine — skipped" in text
+    # No promise the login cannot keep, and no loud marker.
+    assert "the login does this" not in text
+    assert "!!   claude" not in text and "!!   codex" not in text
+
+
+def test_repair_runs_before_the_report(tmp_path, monkeypatch, capsys):
+    # A credentialed machine with a missing registration: the repair happens
+    # first, so the report shows the end state — never a "!!" error that the
+    # very next line fixes.
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(
         install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
     )
-    _capture_subprocess(monkeypatch)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+
+        if cmd[:3] == ["claude", "mcp", "add"]:
+            # Behave like the real CLI: write the user-scope entry.
+            env = dict(
+                pair.split("=", 1)
+                for flag, pair in zip(cmd, cmd[1:])
+                if flag == "--env"
+            )
+            tail = cmd[cmd.index("--") + 1:]
+            (home / ".claude.json").write_text(json.dumps({
+                "mcpServers": {"flightplan": {
+                    "command": tail[0], "args": tail[1:], "env": env,
+                }}
+            }))
+        return _Result()
+
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
 
     assert install.main(["--url", install.DEFAULT_URL]) == 0
     out = capsys.readouterr().out
     assert "registered  flightplan MCP server (claude)" in out
-    assert "re-verify:" in out
+    assert out.index("registered") < out.index("verify:")
+    assert "ok   claude: flightplan MCP server is registered" in out
+    assert "!!   claude" not in out
+    assert "claude mcp add flightplan" not in out
     assert "start a new agent session" in out
 
 
@@ -573,8 +592,6 @@ _STALE_CLAUDE = {
 def test_stale_claude_registration_is_reregistered(tmp_path, monkeypatch, capsys):
     home, _repo = _onboard_repo(tmp_path, monkeypatch)
     (home / ".claude.json").write_text(json.dumps(_STALE_CLAUDE))
-    monkeypatch.setattr(install.getpass, "getpass", lambda *a, **k: _FAKE_KEY)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")  # confirm
     monkeypatch.setattr(
         install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
     )
@@ -591,40 +608,21 @@ def test_stale_claude_registration_is_reregistered(tmp_path, monkeypatch, capsys
     assert cmd[-3:] == ["uvx", "getflightplan", "mcp"]
 
 
-def test_stale_claude_with_no_input_reports_only(tmp_path, monkeypatch, capsys):
+def test_dry_run_makes_no_registration(tmp_path, monkeypatch, capsys):
     home, _repo = _onboard_repo(tmp_path, monkeypatch)
     before = json.dumps(_STALE_CLAUDE)
     (home / ".claude.json").write_text(before)
-
-    def boom(*a, **k):
-        raise AssertionError("must not prompt")
-
-    monkeypatch.setattr(install.getpass, "getpass", boom)
-    monkeypatch.setattr("builtins.input", boom)
-
-    assert install.main(["--no-input", "--url", install.DEFAULT_URL]) == 0
-    out = capsys.readouterr().out
-    assert _OLD_SOURCE in out
-    assert "claude mcp add flightplan" in out          # the manual command instead
-    assert (home / ".claude.json").read_text() == before  # nothing changed
-
-
-def test_dry_run_prints_the_would_be_fix(tmp_path, monkeypatch, capsys):
-    home, _repo = _onboard_repo(tmp_path, monkeypatch)
-    before = json.dumps(_STALE_CLAUDE)
-    (home / ".claude.json").write_text(before)
-
-    def boom(*a, **k):
-        raise AssertionError("must not prompt on a dry run")
-
-    monkeypatch.setattr(install.getpass, "getpass", boom)
-    monkeypatch.setattr("builtins.input", boom)
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
 
     assert install.main(["--dry-run", "--url", install.DEFAULT_URL]) == 0
     out = capsys.readouterr().out
     assert "(dry run)" in out
     assert _OLD_SOURCE in out
     assert "uvx getflightplan mcp" in out
+    assert _mcp_adds(calls) == []
     assert (home / ".claude.json").read_text() == before
 
 
@@ -958,3 +956,186 @@ def test_root_claude_md_contains_pinned_snippet():
 def test_root_digest_command_matches_asset():
     installed = (GIT_ROOT / ".claude" / "commands" / "registry-digest.md").read_text()
     assert installed == install._asset_text("registry-digest.md")
+
+
+# --- Credential rotation and failed-replacement recovery (review round 2) ---
+
+def _current_claude_entry(key=None, url=None):
+    """A ~/.claude.json whose flightplan entry is current except, perhaps,
+    for the embedded credential."""
+    env = {"FLIGHTPLAN_URL": url or install.DEFAULT_URL}
+    if key is not None:
+        env["FLIGHTPLAN_API_KEY"] = key
+    return {
+        "mcpServers": {
+            "flightplan": {
+                "command": "uvx",
+                "args": ["getflightplan", "mcp"],
+                "env": env,
+            }
+        }
+    }
+
+
+def test_matching_credential_is_left_alone(tmp_path, monkeypatch):
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    (home / ".claude.json").write_text(json.dumps(_current_claude_entry(_FAKE_KEY)))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    assert _mcp_adds(calls) == []
+
+
+def test_rotation_replaces_the_embedded_credential(tmp_path, monkeypatch, capsys):
+    # A login stored a new credential; the registration still carries the old
+    # one. The next run must replace it — and never print either value.
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    old = "fp-old-rotated-out"
+    (home / ".claude.json").write_text(json.dumps(_current_claude_entry(old)))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    out = capsys.readouterr().out
+    assert "a different credential" in out
+    assert old not in out
+    assert _FAKE_KEY not in out
+
+    assert ["claude", "mcp", "remove", "flightplan", "--scope", "user"] in calls
+    cmd = _mcp_adds(calls)[0]
+    assert f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in cmd
+
+
+def test_registration_without_a_credential_is_stale(tmp_path, monkeypatch):
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    (home / ".claude.json").write_text(json.dumps(_current_claude_entry(None)))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    cmd = _mcp_adds(calls)[0]
+    assert f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in cmd
+
+
+def test_failed_replacement_restores_the_old_entry(tmp_path, monkeypatch, capsys):
+    # The new add fails after the old entry was removed: the old entry is
+    # rebuilt from its stored command/args/env and put back.
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)
+    old = "fp-old-rotated-out"
+    (home / ".claude.json").write_text(json.dumps(_current_claude_entry(old)))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+
+        if "add" in cmd and f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in cmd:
+            _Result.returncode = 1  # only the replacement add fails
+        return _Result()
+
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    out = capsys.readouterr().out
+    assert "mcp add failed" in out
+    assert "put back" in out
+    assert old not in out  # the restore command is never printed
+
+    restores = [c for c in _mcp_adds(calls) if f"FLIGHTPLAN_API_KEY={old}" in c]
+    assert len(restores) == 1
+    assert restores[0][:6] == ["claude", "mcp", "add", "flightplan", "--scope", "user"]
+    assert restores[0][-3:] == ["uvx", "getflightplan", "mcp"]
+
+
+def test_project_registration_is_replaced_in_project_scope(
+    tmp_path, monkeypatch,
+):
+    _home, repo = _onboard_repo(tmp_path, monkeypatch)
+    old = "fp-old-project-token"
+    (repo / ".mcp.json").write_text(json.dumps(_current_claude_entry(old)))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    assert [
+        "claude", "mcp", "remove", "flightplan", "--scope", "project",
+    ] in calls
+    replacement = next(
+        c for c in _mcp_adds(calls) if f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in c
+    )
+    assert replacement[:6] == [
+        "claude", "mcp", "add", "flightplan", "--scope", "project",
+    ]
+
+
+def test_failed_project_replacement_restores_project_scope(
+    tmp_path, monkeypatch, capsys,
+):
+    _home, repo = _onboard_repo(tmp_path, monkeypatch)
+    old = "fp-old-project-token"
+    (repo / ".mcp.json").write_text(json.dumps(_current_claude_entry(old)))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+
+        if "add" in cmd and f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in cmd:
+            _Result.returncode = 1
+        return _Result()
+
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    out = capsys.readouterr().out
+    assert "put back" in out
+    assert old not in out
+    restores = [c for c in _mcp_adds(calls) if f"FLIGHTPLAN_API_KEY={old}" in c]
+    assert len(restores) == 1
+    assert restores[0][:6] == [
+        "claude", "mcp", "add", "flightplan", "--scope", "project",
+    ]
+
+
+def test_local_registration_is_replaced_in_local_scope(tmp_path, monkeypatch):
+    home, repo = _onboard_repo(tmp_path, monkeypatch)
+    old = "fp-old-local-token"
+    (home / ".claude.json").write_text(json.dumps({
+        "projects": {str(repo): _current_claude_entry(old)},
+    }))
+    monkeypatch.setattr(
+        install.shutil, "which", lambda cmd: f"/bin/{cmd}" if cmd == "claude" else None
+    )
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(["--url", install.DEFAULT_URL]) == 0
+    assert [
+        "claude", "mcp", "remove", "flightplan", "--scope", "local",
+    ] in calls
+    replacement = next(
+        c for c in _mcp_adds(calls) if f"FLIGHTPLAN_API_KEY={_FAKE_KEY}" in c
+    )
+    assert replacement[:6] == [
+        "claude", "mcp", "add", "flightplan", "--scope", "local",
+    ]

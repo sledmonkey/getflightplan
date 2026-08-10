@@ -4,6 +4,44 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- One credential path (decision 72315903). The machine credential lives in
+  `~/.config/flightplan/env`, written by `getflightplan login`. MCP
+  registration reads only that file. It no longer reads the
+  `FLIGHTPLAN_API_KEY` environment variable, which could register a stale
+  token during rotation. The variable still works as plumbing for the MCP
+  server process and the stop hook.
+- Registration runs without prompts, for each agent binary on the machine.
+  The API-key paste prompt is gone, and install lost `--no-input` — nothing
+  prompts now. A terminal is not needed; piped and CI runs register too.
+- `getflightplan login` completes the MCP registration after it stores the
+  credential. A fresh machine needs two commands: install, then login.
+  Login gained `--source`, matching install, so a development registration
+  is not replaced with the PyPI package.
+- `getflightplan install` prints one "next" line with the login command when
+  the machine has no credential.
+- A registration whose stored credential differs from the env file — or that
+  has none — counts as stale. A new login therefore rotates the credential
+  into the MCP registration on the next install or login run. The values are
+  compared, never shown.
+- When a replacement `mcp add` fails, the removed registration is put back
+  from its stored entry, so a failed repair no longer deletes a working
+  registration. Claude repairs and restores stay in the original project,
+  local, or user scope.
+- On a machine with no credential, install reports the missing registration
+  and the stop hook as short pending lines ("..") instead of errors ("!!"),
+  because the login fixes both. The loud lines with the manual command
+  remain for the real problem: a credential exists and registration is still
+  missing.
+- Install repairs the registration before it prints the verify report, so
+  the report shows the end state. A finding that install fixes by itself is
+  never shown as an error first.
+- When an agent binary is not on the machine, the verify line says so
+  ("Claude Code is not on this machine — skipped") instead of promising
+  that the login will register it.
+
 ## [0.13.0] — 2026-08-09
 
 ### Added
