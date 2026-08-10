@@ -995,7 +995,7 @@ def _register_agents(root: Path, *, agent: str, url: str, source: str) -> bool:
 
     mutated = False
 
-    def fix(name: str, reg: Registration, guidance: str) -> None:
+    def fix(name: str, reg: Registration) -> None:
         nonlocal mutated
         if reg.status == CURRENT or not shutil.which(name):
             return
@@ -1017,17 +1017,18 @@ def _register_agents(root: Path, *, agent: str, url: str, source: str) -> bool:
             print(f"  registered  flightplan MCP server ({name})")
             mutated = True
         else:
-            print(f"  !!   {name} mcp add failed — do it by hand:")
-            print(guidance)
+            # One short line; the manual command lives in the verify report
+            # (install prints it right after this; from a login, rerunning
+            # install shows it).
+            print(f"  !!   {name} mcp add failed — run `uvx getflightplan "
+                  "install` for the manual command")
             if removed and _restore_registration(name, reg):
                 print(f"  →    the previous {name} registration was put back")
 
     if agent in ("claude", "both"):
-        fix("claude", _claude_registration(root, source, url, key),
-            _claude_guidance(source))
+        fix("claude", _claude_registration(root, source, url, key))
     if agent in ("codex", "both"):
-        fix("codex", _codex_registration(source, url, key),
-            _codex_guidance(source))
+        fix("codex", _codex_registration(source, url, key))
     return mutated
 
 
