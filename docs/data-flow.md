@@ -37,6 +37,27 @@ same rule measures from the workspace directory instead, so paths are sent
 relative to it and carry the child repository's directory name. Values
 resolving outside the workspace are rejected the same way.
 
+## Finding and registering a repository
+
+`getflightplan login` and `getflightplan register` ask the service which
+repository this checkout is. Four calls exist, and each one carries your
+credential in an `Authorization: Bearer` header.
+
+| Call | What goes out | What comes back |
+|---|---|---|
+| `POST /repos/lookup` | The address of the `origin` remote, raw, and up to 1000 commit ids from `HEAD` backwards | The repository id, its readable name, its enrollment policy, and your access — or no match |
+| `POST /repos/register/start` | The same remote address, the commit id of `HEAD`, and a readable name derived from the remote | A code, a page to open, how long the code lives, and how often to poll |
+| `GET /repos/register/poll` | The code only | Pending, complete (with the repository id and name), or expired |
+| `POST /repos/{id}/requests` | Nothing but the repository id in the path | Pending, or granted. A 403 says the repository is invite only |
+
+Two things about the git facts. The remote address goes out as git holds it,
+because the service normalizes it — that is how `git@host:a/b` and
+`https://host/a/b` become one repository. The commit ids are ids only, never
+messages, file names, diffs, or author data; they exist so that knowing the
+address of a private repository is not enough to join it.
+
+Nothing else about your history is sent, and no branch names go out.
+
 ## The stop hook
 
 At session end, the hook installed at `.claude/hooks/flightplan_stop_hook.py`

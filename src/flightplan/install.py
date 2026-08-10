@@ -168,9 +168,9 @@ def _resolve(root: Path, repo: str | None, url: str | None) -> Resolved:
     toml_path = root / config.PIN_FILENAME
     legacy_path = root / LEGACY_PIN_REL
     if toml_path.exists():
-        existing = toml_path.read_text()
+        existing = toml_path.read_text(encoding="utf-8")
     elif legacy_path.exists():
-        existing = legacy_path.read_text()
+        existing = legacy_path.read_text(encoding="utf-8")
     else:
         existing = ""
     pin = config.read_pin(existing)
@@ -182,6 +182,40 @@ def _resolve(root: Path, repo: str | None, url: str | None) -> Resolved:
         or DEFAULT_URL
     )
     return Resolved(name, resolved_url, pin.target, pin.target_id)
+
+
+# Every character that must never reach the pin file or a terminal. One
+# definition, used by register.py too, so the two cannot drift apart.
+#
+#   \x00-\x1f   the C0 controls
+#   \x7f-\x9f   DEL and the C1 controls. U+009B is a one-character CSI, so a
+#               single C1 can start a terminal escape sequence with no ESC.
+#   the rest   the 12 Unicode Bidi_Control characters: the marks U+061C,
+#              U+200E, U+200F and the overrides and isolates U+202A-U+202E,
+#              U+2066-U+2069. They change the order text is drawn in, so a
+#              name can render as something it does not say.
+#
+# The first two ranges together are exactly Unicode category Cc, which
+# test_install.py checks against `unicodedata` rather than trusting this
+# comment. Everything is written as an escape on purpose: a literal invisible
+# character in this source would fool a reviewer the same way it fools a
+# terminal. Ordinary non-ASCII text — accents, CJK, emoji — is not touched.
+_UNSAFE_CHARS = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+)
+
+
+def _toml_string(value: str) -> str:
+    """`value` as a single-line TOML basic string, quotes included.
+
+    A name in the pin file comes from the service, and a repository owner
+    chose it. A name holding a double quote would end the string early, and a
+    newline after it could add a key of its own — so the two characters TOML
+    escapes are escaped, and every unsafe character is dropped. What this
+    writes always parses, and it always parses as exactly one key.
+    """
+    text = _UNSAFE_CHARS.sub("", str(value))
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 # The header on the generated pin file — one text for both shapes.
@@ -199,13 +233,78 @@ def _pin_file(resolved: Resolved) -> str:
     if resolved.target_id:
         lines = []
         if resolved.target:
-            lines.append(f'target = "{resolved.target}"')
-        lines.append(f'target_id = "{resolved.target_id}"')
-        lines.append(f'name = "{resolved.name}"')
+            lines.append(f"target = {_toml_string(resolved.target)}")
+        lines.append(f"target_id = {_toml_string(resolved.target_id)}")
+        lines.append(f"name = {_toml_string(resolved.name)}")
     else:
-        lines = [f'repo = "{resolved.name}"']
-    lines.append(f'url = "{resolved.url}"')
+        lines = [f"repo = {_toml_string(resolved.name)}"]
+    lines.append(f"url = {_toml_string(resolved.url)}")
     return _PIN_HEADER + "\n".join(lines) + "\n"
+
+
+# The keys the registration flow (register.py) sets in an existing pin file.
+_PINNED_KEYS = ("target", "target_id", "name")
+
+# `key = ...` at the start of a pin-file line. Comments and blank lines miss.
+_PIN_KEY = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=")
+
+
+def _pin_key(line: str) -> str | None:
+    """The key a pin-file line sets, or None for a comment or a blank line."""
+    match = _PIN_KEY.match(line)
+    return match.group(1) if match else None
+
+
+def write_pin_target(root: Path, *, target: str, target_id: str, name: str) -> Path:
+    """Point the pin file at a registered target, and keep the rest of the file.
+
+    `run()` regenerates the whole pin file; this edits it line by line. The
+    `url` line, every comment, and any key we do not own stay exactly where
+    they are, because a repo may have added something we do not know about.
+    A legacy `repo = "..."` line becomes the `name` line in its own place:
+    `name` supersedes `repo` (config.read_pin), so the two must never disagree.
+
+    Every value goes through `_toml_string`, because the name comes from the
+    service and a repository owner chose it. The write is atomic, like the env
+    writer: a temporary file, then `os.replace`. A reader sees the old file or
+    the new one, never a half file.
+    """
+    path = root / config.PIN_FILENAME
+    values = {"target": target, "target_id": target_id, "name": name}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    if not lines:
+        lines = _PIN_HEADER.splitlines()
+
+    kept: list[str] = []
+    written: set[str] = set()
+    for line in lines:
+        key = _pin_key(line)
+        if key == "repo":
+            key = "name"          # the legacy name key, replaced in place
+        if key in values:
+            if key not in written:
+                kept.append(f"{key} = {_toml_string(values[key])}")
+                written.add(key)
+            continue              # a second line for the same key is dropped
+        kept.append(line)
+
+    # Whatever the file did not already have goes in front of the url line, so
+    # the pin keeps the order the installer writes.
+    missing = [
+        f"{k} = {_toml_string(values[k])}"
+        for k in _PINNED_KEYS if k not in written
+    ]
+    if missing:
+        at = next(
+            (i for i, line in enumerate(kept) if _pin_key(line) == "url"), len(kept),
+        )
+        kept[at:at] = missing
+
+    _write_atomic(path, "".join(f"{line}\n" for line in kept), 0o644)
+    return path
 
 
 # --------------------------------------------------------------------------- #
@@ -315,14 +414,19 @@ def run(
     statuses: dict[str, str] = {}
 
     def write(rel: str, content: str) -> None:
+        # UTF-8 both ways: everything written here is text we generated, and a
+        # pinned repository name may hold any character.
         path = root / rel
         if path.exists():
-            statuses[rel] = "unchanged" if path.read_text() == content else "updated"
+            statuses[rel] = (
+                "unchanged" if path.read_text(encoding="utf-8") == content
+                else "updated"
+            )
         else:
             statuses[rel] = "written"
         if not dry_run and statuses[rel] != "unchanged":
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
 
     resolved = _resolve(root, repo, url)
     name = resolved.name
@@ -347,7 +451,7 @@ def run(
         snippet_targets.append("AGENTS.md")
     for fname in snippet_targets:
         path = root / fname
-        original = path.read_text() if path.exists() else None
+        original = path.read_text(encoding="utf-8") if path.exists() else None
         write(fname, _place_block(original, block))
 
     # 3. Claude Code artifacts.
@@ -655,20 +759,24 @@ def _env_file_lines(path: Path) -> list[str]:
         return []
 
 
-def _write_env_lines(path: Path, lines: list[str]) -> None:
-    """Replace the env file with `lines`, atomically and with mode 600.
+def _write_atomic(path: Path, text: str, mode: int) -> None:
+    """Replace `path` with `text`, atomically and with `mode`.
 
-    The secret is never in a world-readable file, not even for an instant: the
-    temporary file gets mode 600 before any content goes in, and `os.replace`
-    then moves it over the target in one step. A reader sees the old file or
-    the new one, never a half-written one.
+    The content goes to a temporary file first, which gets `mode` before any
+    content goes in. `os.replace` then moves it over the target in one step. A
+    reader sees the old file or the new one, never a half-written one. For the
+    env file this also means the secret is never in a world-readable file, not
+    even for an instant.
     """
     temporary = path.with_name(path.name + ".tmp")
-    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
-        with os.fdopen(handle, "w") as stream:
-            stream.write("".join(f"{line}\n" for line in lines))
-        os.chmod(temporary, 0o600)  # O_CREAT skips the mode on a leftover file
+        # UTF-8 explicitly: a repository name can hold any text, and TOML is
+        # UTF-8 by specification. Without this the locale decides, and a name
+        # with an accent in it raises under `LC_ALL=C`.
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.chmod(temporary, mode)  # O_CREAT skips the mode on a leftover file
         os.replace(temporary, path)
     except Exception:
         try:
@@ -676,6 +784,11 @@ def _write_env_lines(path: Path, lines: list[str]) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_env_lines(path: Path, lines: list[str]) -> None:
+    """Replace the env file with `lines`, atomically and with mode 600."""
+    _write_atomic(path, "".join(f"{line}\n" for line in lines), 0o600)
 
 
 def _write_key_file(key: str) -> Path:

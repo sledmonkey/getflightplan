@@ -10,6 +10,8 @@ verb covers install and the MCP stdio client:
   - `getflightplan login …` — gets a credential from the service and stores it
     on this machine (`login.main`).
   - `getflightplan logout` — removes that stored credential (`login.logout_main`).
+  - `getflightplan register` — finds this repository in the registry, or
+    registers it (`register.main`). `login` runs the same check on its own.
   - `getflightplan mcp` — runs the stdio MCP client (`mcp_server.main`), the
     process an agent's MCP config launches.
 
@@ -47,15 +49,16 @@ def main(argv: list[str] | None = None) -> int:
         prog="getflightplan",
         description="FlightPlan — shared task memory for coding agents.",
         epilog="commands: install (per-repo setup) · uninstall (per-repo "
-        "removal) · login (get a credential) · logout (remove it) · mcp "
-        "(stdio client an agent launches).",
+        "removal) · login (get a credential) · logout (remove it) · register "
+        "(find or register this repository) · mcp (stdio client an agent "
+        "launches).",
     )
     parser.add_argument(
         "--version", action="version", version=f"getflightplan {_version()}",
     )
     parser.add_argument(
         "command", nargs="?",
-        choices=["install", "uninstall", "login", "logout", "mcp"],
+        choices=["install", "uninstall", "login", "logout", "register", "mcp"],
         help="what to run",
     )
     parser.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
@@ -83,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
         from . import login
 
         return login.logout_main(args.rest)
+
+    if args.command == "register":
+        # Lazy like the others; register.py is stdlib-only too.
+        from . import register
+
+        return register.main(args.rest)
 
     if args.command == "mcp":
         # Lazy: mcp_server imports httpx+mcp (present in the thin uvx env).

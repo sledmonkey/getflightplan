@@ -19,6 +19,10 @@ page to open. The client then polls `{url}/auth/device` until you approve.
 This flow is also the automatic fallback. The client changes to it when the
 listener cannot bind, or when the browser launcher fails.
 
+After the credential is stored, the login looks for this repository in the
+registry and offers to register it (register.py). That step can fail without
+failing the login: the credential is already stored. `--no-register` skips it.
+
 The credential goes to `~/.config/flightplan/env` with mode 600 — the file
 that already holds the API key, so the MCP server and the stop hook find it
 with no other change. The client never prints the credential. The client never
@@ -371,6 +375,27 @@ def run_browser(url: str, verifier: str, challenge: str, label: str, sleep=time.
 # CLI
 # --------------------------------------------------------------------------- #
 
+def find_repository(url: str, *, headless: bool, sleep=time.sleep) -> None:
+    """Find or register the repository, right after the credential is stored.
+
+    The login has already succeeded by the time this runs, so nothing here may
+    fail it: every error becomes one printed line. The token comes back out of
+    the env file the store just wrote, which keeps one reader for the
+    credential instead of passing the secret along another path.
+    """
+    try:
+        # Lazy: register imports this module, so the import cannot be at the
+        # top of it.
+        from . import register
+
+        register.discover(
+            install._repo_root(), url, install._read_key_file(),
+            headless=headless, sleep=sleep,
+        )
+    except Exception as err:
+        print(f"FlightPlan could not check this repository ({err}).")
+
+
 def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
     parser = argparse.ArgumentParser(
         prog="getflightplan login",
@@ -381,6 +406,10 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
         "--headless", action="store_true",
         help="log in with a code instead of a browser (for a remote shell)",
     )
+    parser.add_argument(
+        "--no-register", action="store_true",
+        help="do not look for this repository after the login",
+    )
     args = parser.parse_args(argv)
 
     url = resolve_url(args.url)
@@ -388,10 +417,14 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
     label = device_label()
     flow = run_headless if args.headless else run_browser
     try:
-        return flow(url, verifier, challenge, label, sleep=sleep)
+        code = flow(url, verifier, challenge, label, sleep=sleep)
     except LoginError as err:
         print(str(err))
         return 1
+
+    if code == 0 and not args.no_register:
+        find_repository(url, headless=args.headless, sleep=sleep)
+    return code
 
 
 def logout_main(argv: list[str] | None = None) -> int:

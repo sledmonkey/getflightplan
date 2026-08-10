@@ -72,11 +72,13 @@ def _toml_value(path: Path, key: str) -> str | None:
     tomllib (system python3 may predate it), no dependency."""
     pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"([^"]+)"')
     try:
-        for line in path.read_text().splitlines():
+        # UTF-8 explicitly: TOML is UTF-8 by specification, and a pinned
+        # repository name can hold any text. The locale must not decide it.
+        for line in path.read_text(encoding="utf-8").splitlines():
             m = pattern.match(line)
             if m:
                 return m.group(1)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         pass
     return None
 

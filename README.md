@@ -74,6 +74,18 @@ device and enter the code.
 `getflightplan logout` removes the stored credential from this machine. To
 revoke it on the service, use the `/devices` page.
 
+## Finding your repository
+
+After a login, the client asks the registry which repository this checkout is.
+It sends the address of your `origin` remote and up to 1000 commit ids, which
+prove that you have a clone. If your account has access, the id and the name
+go into `.flightplan.toml`. If the registry does not know the repository, the
+client offers to register it in your browser. If your account has no access,
+the client offers to request it.
+
+`getflightplan login --no-register` skips the check. `getflightplan register`
+runs it on its own, later. A failed check never fails a login.
+
 ## Configuration
 
 - `FLIGHTPLAN_URL` — `https://api.getflightplan.com`
