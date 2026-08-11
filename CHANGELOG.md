@@ -4,7 +4,7 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.13.2] — 2026-08-10
 
 ### Changed
 - One credential path (decision 72315903). The machine credential lives in
