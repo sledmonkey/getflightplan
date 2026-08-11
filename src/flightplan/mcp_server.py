@@ -41,7 +41,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from . import config, paths, workspace
+from . import config, landed, paths, workspace
 
 # One MCP server process ≈ one agent session; good enough for the spec's
 # "agent session id if available".
@@ -697,6 +697,47 @@ async def complete_intent(
             "in it — next completion, aim to cover: what surprised you, approaches "
             "tried and rejected, and anything deliberately left in place. Those "
             "three are what future agents will reach for."
+        )
+    return result
+
+
+@mcp.tool(
+    description=(
+        "Record that work an already-COMPLETED intent declared uncommitted is now "
+        "in git. Call this the moment you learn it: you committed and pushed that "
+        "work yourself, or you can see in the tree that the work another session "
+        "left uncommitted has since landed. Until someone says so, the registry "
+        "keeps warning every agent who touches those paths and keeps re-telling "
+        "the same story about work that is no longer at risk — a tree it cannot "
+        "see is the one thing it cannot check for itself. Pass the commit SHAs if "
+        "you know them; landing without them is fine and complete, the timestamp "
+        "is the correction. Idempotent, and it never rewrites the completion "
+        "record — the outcome, the reported files and the original `uncommitted` "
+        "declaration all stand."
+    )
+)
+async def mark_intent_landed(
+    id: Annotated[str, Field(description="The intent id whose work has landed.")],
+    commits: Annotated[
+        list[str] | None,
+        Field(description="Commit SHAs that carried the work, if you know them. Omit if you don't — do not guess."),
+    ] = None,
+) -> dict:
+    # The simplest tool in this file, on purpose: it is addressed by id and
+    # carries no paths, so none of the pin routing, workspace mapping or path
+    # canonicalization above applies to it. The body rule is shared with the
+    # CLI (landed.body_for) so the two can never say different things.
+    result = await _call("POST", f"/intents/{id}/landed", json=landed.body_for(commits))
+    error = result.get("error", "") if isinstance(result, dict) else ""
+    if "(409)" in error:
+        result["advice"] = (
+            "That intent has not finished yet, and landing is a correction to a "
+            "finished one. Call complete_intent first if the work is done."
+        )
+    elif "(403)" in error:
+        result["advice"] = (
+            "Only the author of that intent can land it. Mention it to your user "
+            "once and move on — the registry is advisory."
         )
     return result
 

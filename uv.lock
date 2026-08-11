@@ -225,7 +225,7 @@ wheels = [
 
 [[package]]
 name = "getflightplan"
-version = "0.13.0"
+version = "0.13.3"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

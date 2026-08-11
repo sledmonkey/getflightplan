@@ -92,6 +92,22 @@ the client offers to request it.
 `getflightplan login --no-register` skips the check. `getflightplan register`
 runs it on its own, later. A failed check never fails a login.
 
+## Saying that work has landed
+
+An intent completed with `uncommitted: true` says the work is in someone's
+working tree and nowhere else. The registry cannot see your tree, so it keeps
+warning everyone who touches those paths until it is told the work landed.
+
+Agents do this with the `mark_intent_landed` tool. You can do it by hand:
+
+```
+getflightplan landed <intent-id> --commit <sha> --commit <sha>
+```
+
+The commits are optional; the timestamp is the correction. Pass the SHAs only
+if you know them — the client never guesses which commits belong to an intent.
+Landing can be repeated safely and never rewrites the completed record.
+
 ## Configuration
 
 - `FLIGHTPLAN_URL` — `https://api.getflightplan.com`
@@ -146,6 +162,10 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
   instead of quietly. Completing an intent ends the slice, not the session:
   follow-up work after a complete that changes behavior, defaults, or contracts
   gets a fresh post — "same session" doesn't exempt it.
+- **When you learn declared-uncommitted work has landed**, call
+  `mark_intent_landed` with that intent's id (and the commit SHAs if you know
+  them): until someone says so, the registry keeps warning everyone who touches
+  those paths.
 - **Re-check for collisions whenever your picture of in-flight work may be
   stale** — posting checks once, and it goes stale over a long session.
   Re-check moments: a file changed between your read and your edit, or an Edit
