@@ -10,9 +10,11 @@ Two things worth being explicit about:
   your work, so they can name files, functions, bugs, and design choices.
   They are the product — that description is what other agents on your team
   read. If a repo is sensitive, that prose is the surface to think about.
-- **Your identity is not sent.** The author name shown on intents is derived
-  server-side from the API key. The client never sends a username, email,
-  hostname, or machine identifier.
+- **Your identity is not sent with your work.** The author name shown on
+  intents is derived server-side from the API key. No intent call carries a
+  username, email, hostname, or machine identifier. The one exception is
+  login: the machine hostname goes out once, as the label for the credential.
+  See [Logging in](#logging-in).
 
 ## What never leaves
 
@@ -36,6 +38,18 @@ When `.flightplan.toml` pins a workspace rather than a single repository, the
 same rule measures from the workspace directory instead, so paths are sent
 relative to it and carry the child repository's directory name. Values
 resolving outside the workspace are rejected the same way.
+
+## Logging in
+
+`getflightplan login` sends one value about your machine: its hostname, as the
+label for the credential it is about to mint. It travels as the `label` field —
+in the query string of the approval page your browser opens, or in the body of
+`POST /auth/device/start` on the headless path. The service shows it on the
+`/devices` page so you can tell one credential from another and revoke the
+right one.
+
+A hostname can carry a name (`brads-macbook-pro.local`). Nothing else about the
+machine goes out, and the label is never attached to an intent.
 
 ## Finding and registering a repository
 
