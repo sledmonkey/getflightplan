@@ -4,6 +4,27 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- A way to say that work has landed. An intent completed with
+  `uncommitted: true` says the work is in one working tree and nowhere else,
+  and the registry keeps warning everyone who touches those paths until it is
+  told otherwise — it cannot see your tree. The new `mark_intent_landed` MCP
+  tool and the new `getflightplan landed <intent-id>` command record the
+  moment the work reached git. Landing can be repeated safely, and it never
+  rewrites the completed record.
+- `getflightplan landed` takes commit ids with a repeatable `--commit` flag.
+  They are optional: the timestamp alone is the correction. The client never
+  guesses which commits belong to an intent.
+
+### Changed
+- The service now refuses a completion retry that changes `outcome`,
+  `summary`, `title`, `touches`, `branch`, or `uncommitted` on an intent that
+  is already done or abandoned. The answer is 409. Send the same values again
+  to retry, post a decision to correct an outcome, or use the landed verb for
+  the git facts. Reported `files` and `commits` still accrete as before.
+
 ## [0.13.2] — 2026-08-10
 
 ### Changed

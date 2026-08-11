@@ -1,5 +1,6 @@
 """End-to-end smoke: spawn the MCP server over stdio (like Claude Code does),
-list tools, post an intent, complete it. Needs a reachable registry:
+list tools, post an intent, complete it as uncommitted, then land it twice to
+prove landing is idempotent. Needs a reachable registry:
 
     FLIGHTPLAN_URL=<registry url> FLIGHTPLAN_API_KEY=<key> \
         uv run python scripts/smoke_mcp.py
@@ -31,7 +32,8 @@ async def main() -> None:
             names = sorted(t.name for t in tools.tools)
             print("tools:", names)
             assert names == [
-                "complete_intent", "list_intents", "post_intent", "update_intent",
+                "complete_intent", "list_intents", "mark_intent_landed",
+                "post_intent", "update_intent",
             ], names
 
             posted = text(
@@ -54,11 +56,34 @@ async def main() -> None:
                         "id": posted["id"],
                         "status": "done",
                         "outcome": "Smoke test passed; registry and MCP wiring work end to end.",
+                        # Declared uncommitted so the landing below has
+                        # something real to correct.
+                        "uncommitted": True,
                     },
                 )
             )
             assert done["intent"]["status"] == "done", done
             print("completed:", done["intent"]["id"])
+
+            landed = text(
+                await session.call_tool(
+                    "mark_intent_landed",
+                    {"id": posted["id"], "commits": ["0" * 40]},
+                )
+            )
+            stamp = landed["intent"]["landed_at"]
+            assert stamp, landed
+            # `uncommitted` is the completion-time fact and is never rewritten.
+            assert landed["intent"]["uncommitted"] is True, landed
+            print("landed:", stamp)
+
+            again = text(
+                await session.call_tool(
+                    "mark_intent_landed", {"id": posted["id"]},
+                )
+            )
+            assert again["intent"]["landed_at"] == stamp, again
+            print("landing is idempotent")
             print("SMOKE OK")
 
 
