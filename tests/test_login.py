@@ -477,3 +477,102 @@ def test_cli_dispatches_logout(monkeypatch):
     monkeypatch.setattr(login, "logout_main", lambda argv: seen.append(argv) or 0)
     assert cli.main(["logout"]) == 0
     assert seen == [[]]
+
+
+# --------------------------------------------------------------------------- #
+# MCP registration after the login (decisions bcdc4caa and 72315903)
+# --------------------------------------------------------------------------- #
+
+def test_register_mcp_runs_the_promptless_registrar(monkeypatch):
+    seen: dict = {}
+
+    def registrar(root, *, agent, url, source):
+        seen.update(agent=agent, url=url, source=source)
+        return True
+
+    monkeypatch.setattr(install, "_register_agents", registrar)
+    login.register_mcp("https://example.test")
+    assert seen == {
+        "agent": "both",
+        "url": "https://example.test",
+        "source": install.PACKAGE_SOURCE,
+    }
+
+
+def test_register_mcp_forwards_a_custom_source(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(
+        install, "_register_agents",
+        lambda root, *, agent, url, source: seen.update(source=source) or True,
+    )
+    login.register_mcp("https://example.test", source="/src/local")
+    assert seen["source"] == "/src/local"
+
+
+def test_register_mcp_failure_cannot_fail_the_login(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("mcp add exploded")
+
+    monkeypatch.setattr(install, "_register_agents", boom)
+    login.register_mcp("https://example.test")
+    assert "could not set up the MCP registration" in capsys.readouterr().out
+
+
+def test_login_source_flag_reaches_registration(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    seen: dict = {}
+    server, url = stub_service({
+        "/auth/device": lambda body: (200, {"token": _FAKE_TOKEN}),
+    })
+    monkeypatch.setenv("FLIGHTPLAN_URL", url)
+    monkeypatch.setattr(login.webbrowser, "open", _browser_that_approves({}))
+    monkeypatch.setattr(
+        login, "register_mcp", lambda u, source: seen.update(source=source),
+    )
+    monkeypatch.setattr(
+        login, "find_repository", lambda u, *, headless, sleep: None,
+    )
+    try:
+        assert login.main(["--source", "/src/local"]) == 0
+    finally:
+        server.shutdown()
+    assert seen["source"] == "/src/local"
+
+
+def test_login_runs_the_mcp_step_before_the_repository_check(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    order: list[str] = []
+    server, url = stub_service({
+        "/auth/device": lambda body: (200, {"token": _FAKE_TOKEN}),
+    })
+    monkeypatch.setenv("FLIGHTPLAN_URL", url)
+    monkeypatch.setattr(login.webbrowser, "open", _browser_that_approves({}))
+    monkeypatch.setattr(login, "register_mcp", lambda u, source: order.append("mcp"))
+    monkeypatch.setattr(
+        login, "find_repository",
+        lambda u, *, headless, sleep: order.append("repo"),
+    )
+    try:
+        assert login.main([]) == 0
+    finally:
+        server.shutdown()
+    assert order == ["mcp", "repo"]
+
+
+def test_failed_login_skips_the_mcp_step(tmp_path, monkeypatch, capsys):
+    _home(tmp_path, monkeypatch)
+    server, url = stub_service({
+        "/auth/device/start": lambda body: (
+            200, {"device_code": "d", "user_code": "u", "interval": 0},
+        ),
+        "/auth/device": lambda body: (400, {"error": "expired"}),
+    })
+    monkeypatch.setenv("FLIGHTPLAN_URL", url)
+    monkeypatch.setattr(
+        login, "register_mcp",
+        lambda *a, **k: pytest.fail("no MCP step after a failed login"),
+    )
+    try:
+        assert login.main(["--headless"], sleep=lambda _s: None) == 1
+    finally:
+        server.shutdown()
