@@ -4,189 +4,180 @@ All notable changes to the FlightPlan client are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.13.3] — 2026-08-11
+## [Unreleased]
+
+### Changed
+- `docs/data-flow.md` now documents the one identity exception. Login sends
+  your machine hostname once, as the label for the new credential. No intent
+  call sends it, and nothing else about the machine goes out.
+
+## [0.13.3] - 2026-08-11
 
 ### Added
-- A way to say that work has landed. An intent completed with
-  `uncommitted: true` says the work is in one working tree and nowhere else,
-  and the registry keeps warning everyone who touches those paths until it is
-  told otherwise — it cannot see your tree. The new `mark_intent_landed` MCP
-  tool and the new `getflightplan landed <intent-id>` command record the
-  moment the work reached git. Landing can be repeated safely, and it never
-  rewrites the completed record.
-- `getflightplan landed` takes commit ids with a repeatable `--commit` flag.
-  They are optional: the timestamp alone is the correction. The client never
+- An intent completed with `uncommitted: true` warns everyone who touches
+  those paths, because the registry cannot see your tree. The new
+  `mark_intent_landed` tool and `getflightplan landed <intent-id>` command
+  record that the work reached git.
+- Repeat `landed` calls are safe. They never rewrite the completed record.
+- `getflightplan landed` takes commit ids with a repeatable `--commit`. They
+  are optional: the timestamp alone is the correction. The client never
   guesses which commits belong to an intent.
 
 ### Changed
-- The service now refuses a completion retry that changes `outcome`,
-  `summary`, `title`, `touches`, `branch`, or `uncommitted` on an intent that
-  is already done or abandoned. The answer is 409. Send the same values again
-  to retry, post a decision to correct an outcome, or use the landed verb for
-  the git facts. Reported `files` and `commits` still accrete as before.
+- The service now refuses completion retries that change `outcome`, `summary`,
+  `title`, `touches`, `branch`, or `uncommitted` on an intent that is done or
+  abandoned. Those get a 409 answer. Resend the same values to retry, or post
+  a decision to correct an outcome.
+- Reported `files` and `commits` still merge into a completed intent as
+  before. Use `getflightplan landed` to add the git facts later.
 
-## [0.13.2] — 2026-08-10
+## [0.13.2] - 2026-08-10
 
 ### Changed
-- One credential path (decision 72315903). The machine credential lives in
-  `~/.config/flightplan/env`, written by `getflightplan login`. MCP
-  registration reads only that file. It no longer reads the
-  `FLIGHTPLAN_API_KEY` environment variable, which could register a stale
-  token during rotation. The variable still works as plumbing for the MCP
-  server process and the stop hook.
+- One credential path (decision 72315903). `getflightplan login` writes the
+  machine credential to `~/.config/flightplan/env`, and MCP registration reads
+  only that file. It no longer reads `FLIGHTPLAN_API_KEY`, which could
+  register a stale token during a rotation.
+- The MCP server process and the stop hook still read `FLIGHTPLAN_API_KEY`.
 - Registration runs without prompts, for each agent binary on the machine.
-  The API-key paste prompt is gone, and install lost `--no-input` — nothing
-  prompts now. A terminal is not needed; piped and CI runs register too.
-- `getflightplan login` completes the MCP registration after it stores the
-  credential. A fresh machine needs two commands: install, then login.
-  Login gained `--source`, matching install, so a development registration
-  is not replaced with the PyPI package.
+  `getflightplan install` lost `--no-input`, because nothing prompts now. The
+  command needs no terminal, so piped runs and CI runs register too.
+- `getflightplan login` finishes MCP registration after it stores the
+  credential. A fresh machine runs `getflightplan install`, then
+  `getflightplan login`. Login gained `--source`, which keeps a development
+  registration in place.
 - `getflightplan install` prints one "next" line with the login command when
   the machine has no credential.
-- A registration whose stored credential differs from the env file — or that
-  has none — counts as stale. A new login therefore rotates the credential
-  into the MCP registration on the next install or login run. The values are
-  compared, never shown.
-- When a replacement `mcp add` fails, the removed registration is put back
-  from its stored entry, so a failed repair no longer deletes a working
-  registration. Claude repairs and restores stay in the original project,
-  local, or user scope.
-- On a machine with no credential, install reports the missing registration
-  and the stop hook as short pending lines ("..") instead of errors ("!!"),
-  because the login fixes both. The loud lines with the manual command
-  remain for the real problem: a credential exists and registration is still
-  missing.
-- Install repairs the registration before it prints the verify report, so
-  the report shows the end state. A finding that install fixes by itself is
-  never shown as an error first.
-- When an agent binary is not on the machine, the verify line says so
-  ("Claude Code is not on this machine — skipped") instead of promising
-  that the login will register it.
+- A registration is stale when its stored credential differs from the env
+  file, or is missing. So a new login rotates the credential in on the next
+  install or login run. The client compares the values but never shows them.
+- A failed replacement `mcp add` now puts the removed registration back, so a
+  failed repair no longer deletes a working one. Repairs and restores stay in
+  the original project, local, or user scope.
+- On a machine with no credential, install shows pending lines ("..") for the
+  missing registration and the stop hook, not errors, because login fixes
+  both. The loud manual-command lines remain for the real problem: a
+  credential that exists with a registration still missing.
+- Install repairs the registration before it prints the verify report, so the
+  report shows the end state. Install never reports a finding it fixed itself
+  as an error.
+- When an agent binary is not on the machine, the verify line says "Claude
+  Code is not on this machine — skipped". Before, it promised that login would
+  register the binary.
 
-## [0.13.0] — 2026-08-09
+## [0.13.0] - 2026-08-09
 
 ### Added
-- `getflightplan login` now finds this repository in the registry. The command
-  runs the check after it stores the credential. The check cannot fail the
-  login. If the check has a problem, the command prints one line, and the
-  login still succeeds. Use `--no-register` to skip the check.
-- The check sends two git facts: the address of the `origin` remote, and up to
-  1000 commit ids from `HEAD` backwards. The service normalizes the address,
-  so two forms of the same address are one repository. The commit ids prove
-  that you have a clone. The client sends no other git data.
-- If your account has access to the repository, the client writes the id and
-  the name to `.flightplan.toml`. The client keeps every other line in that
-  file, and it keeps the comments. The write is atomic.
-- If the registry does not know the repository, the client asks you to
-  register it. On yes, the command opens a page in your browser and shows the
-  address as well. Then it waits until you finish. If the code expires, the
-  command tells you to try again.
-- If the registry knows the repository, but your account has no access, the
-  client asks you to request access. If the repository is invite only, the
-  service answers with the reason, and the client prints it.
-- A pending request gets a notice. Your work is recorded privately, under your
-  personal account. Shared collision checks and shared context from the
-  repository are not available. Approval changes your future posts only.
+- `getflightplan login` now finds this repository in the registry, after it
+  stores the credential. The check can never fail the login; a problem prints
+  one line. Use `--no-register` to skip it.
+- The check sends two git facts: the `origin` remote address, and up to 1000
+  commit ids from `HEAD` backwards. The service normalizes the address, so two
+  forms of it are one repository. The commit ids prove you have a clone.
+- With access to the repository, the client writes the id and the name to
+  `.flightplan.toml`. It keeps every other line and every comment in that
+  file.
+- If the registry does not know the repository, the client offers to register
+  it. Answering yes opens a page in your browser, prints the address, and
+  waits. An expired code tells you to try again.
+- If the registry knows the repository but your account has no access, the
+  client offers to request access. An invite-only repository answers with the
+  reason, which the client prints.
+- A pending request gets a notice. Your work records privately under your
+  personal account, without shared collision checks or shared context.
+  Approval changes your future posts only.
 - `getflightplan register` runs the same check on its own. Use it after a
-  login that you skipped, or to try again. The command needs a stored
-  credential. Without one, it tells you to run `getflightplan login`.
-- A shallow clone gets a warning. A shallow clone holds only part of the
-  history, so the check can miss a registration that already exists.
-- The check is skipped in three conditions. The pin file already holds an id.
-  A project pin covers the folder. Or the folder has no git origin remote.
-- The client cleans the names it gets from the service. An owner chooses the
-  name of a repository, so the name is text from a different person. The
-  client removes the control characters before it prints the name, so the
-  name cannot change what you see in your terminal. The client also removes a
-  double quote and a backslash before it writes the name to
-  `.flightplan.toml`, so the name cannot add a key to that file. Every value
-  in the pin file is escaped as well. The client removes every character in
-  the Unicode category Cc. This includes the C1 controls, because U+009B can
-  start an escape sequence on its own. The client also removes the bidi
-  overrides, U+202A to U+202E and U+2066 to U+2069, because they change the
-  order the text is drawn in. Usual text stays as it is. Accents, CJK, and
-  emoji are correct in a name.
+  login you skipped, or to try again. It needs a stored credential, and
+  without one it tells you to run `getflightplan login`.
+- A shallow clone gets a warning. It holds only part of the history, so the
+  check can miss a registration that already exists.
+- The check is skipped when the pin file already holds an id, a project pin
+  covers the folder, or the folder has no git `origin` remote.
 
 ### Changed
-- The client reads and writes `.flightplan.toml` as UTF-8. TOML is UTF-8 by
-  specification. Before, the locale of the machine decided the encoding, so a
-  name with an accent in it stopped the command on a machine with the C
-  locale.
+- The client reads and writes `.flightplan.toml` as UTF-8, as the TOML
+  specification requires. Before, the machine locale decided the encoding.
+  Under the C locale, an accented name stopped the command.
 
-## [0.12.0] — 2026-08-09
+### Security
+- The client strips control characters and bidi overrides from
+  service-supplied names before it prints or writes them. An owner picks the
+  name of a repository, so it is text from a different person. A hostile name
+  cannot alter your terminal or your pin file.
+- Accents, CJK, and emoji pass through a name unchanged. Every value written
+  to `.flightplan.toml` is escaped.
+
+## [0.12.0] - 2026-08-09
 
 ### Added
-- `getflightplan login` gets a credential from the service. You do not copy
+- `getflightplan login` gets a credential from the service. You no longer copy
   an API key.
-- The command opens your browser at the approval page of the service. You
-  approve there. The service then sends the browser to a listener on this
-  machine. The listener uses the address 127.0.0.1 and a free port. It starts
-  before the browser, and it closes after the one callback.
-- The command uses PKCE. It keeps a secret verifier in the process. It sends
-  only a hash of the verifier to the service. The one-time code from the
-  callback is of no use without the verifier.
-- If no approval arrives in 5 minutes, the command stops. It then tells you
-  about the `--headless` flow.
-- `getflightplan login --headless` logs you in with a code. The command shows
-  a short code and an address. You open that address on another device and
-  enter the code. The command waits until you approve.
-- The client changes to the code flow without a question in two conditions:
-  the listener cannot open a port, or the browser does not start.
-- The credential goes to `~/.config/flightplan/env` with mode 600. This is the
-  file that already holds the API key, so the MCP server and the stop hook
-  find it. The client never prints the credential. The client never writes it
-  to `.flightplan.toml` or to any other file in the repository.
-- A login rotates the credential of this machine. The command sends the id of
-  the stored credential, and the service revokes that credential when it
-  mints the new one. The id is not a secret. Only your own credential can be
-  replaced this way.
-- `getflightplan logout` removes the credential from this machine. It keeps
-  every other line in the file. To revoke the credential on the service, use
-  the `/devices` page.
+- The command opens your browser at the service approval page. The service
+  then sends the browser to a listener on this machine, at 127.0.0.1 on a free
+  port. The listener starts before the browser and closes after one callback.
+- Login uses PKCE. The secret verifier stays in the process, and only its hash
+  goes to the service. The one-time callback code is of no use without the
+  verifier.
+- If no approval arrives in 5 minutes, the command stops and points you at the
+  `--headless` flow.
+- `getflightplan login --headless` shows a short code and an address. You open
+  that address on another device and enter the code. The command waits until
+  you approve.
+- The client switches to the code flow without asking in two conditions. The
+  listener cannot open a port, or the browser does not start.
+- The client writes the credential to `~/.config/flightplan/env` with mode
+  600, where the MCP server and the stop hook find it. It never prints the
+  credential. It never writes it to `.flightplan.toml` or any other file in
+  the repository.
+- A login rotates this machine's credential. The command sends the stored
+  credential id, which the service revokes as it mints the new one. The id is
+  not a secret, and you can replace only your own credential.
+- `getflightplan logout` removes the credential from this machine and keeps
+  every other line in the file. To revoke it on the service, use the
+  `/devices` page.
 
 ### Changed
-- The write of `~/.config/flightplan/env` is now atomic. The new content goes
-  to a temporary file with mode 600 first. Then it replaces the old file in
-  one step. A line in the file that is not the key stays as it is.
+- The client now writes `~/.config/flightplan/env` atomically, so an
+  interrupted write cannot damage the file. A line that is not the key stays
+  as it is.
 
-## [0.11.0] — 2026-08-09
-
-### Added
-- Under a project pin, a `list_intents` check with `overlaps` also asks each
-  child repository that the globs touch. Before, the check asked the project
-  only, and it did not find work posted inside a child repository. Each child
-  repository is asked with its own paths. A glob that starts with `**` goes
-  to every child repository unchanged. A glob with a wildcard first segment,
-  like `agent*/src/**`, goes to each child directory that matches. A check of
-  a child repository uses the globs only, because a collision across two
-  scopes is deterministic. The judge still runs one time, on the query of the
-  project. The results are merged into one list. For one intent, the project
-  result wins over a child copy of that intent. Between two child results,
-  the loudest alert wins. If a child repository cannot be reached, the other
-  results still come back with a `note` that names it. The full check at the
-  time you post an intent does not change.
-
-## [0.10.0] — 2026-08-09
+## [0.11.0] - 2026-08-09
 
 ### Added
-- The pin file `.flightplan.toml` accepts a third shape: `target = "project"`.
-  A project pin binds a workspace folder. The child directories of the
-  workspace are separate repositories. Each child has its own repository pin.
+- Under a project pin, a `list_intents` check with `overlaps` now also asks
+  each child repository the globs touch. Before, it asked the project only, so
+  it missed work posted inside a child repository.
+- Each child gets the check with its own paths. A glob that starts with `**`
+  goes to every child unchanged. A glob with a wildcard first segment, like
+  `agent*/src/**`, goes to each matching child directory.
+- A child check uses the globs only, because a collision across two scopes is
+  deterministic. The judge still runs one time, on the project query.
+- The client merges the results into one list. For one intent, the project
+  result wins over a child copy. Between two child results, the loudest alert
+  wins.
+- An unreachable child repository does not lose the other results. The answer
+  then holds a `note` that names that child. The full check when you post an
+  intent does not change.
+
+## [0.10.0] - 2026-08-09
+
+### Added
+- `.flightplan.toml` accepts a third shape: `target = "project"`. A project
+  pin binds a workspace folder whose child directories are separate
+  repositories. Each child keeps its own repository pin.
 - Under a project pin, the client makes each path relative to the workspace
-  root. Then the client maps each path to a child repository.
-- If all paths are in one child repository, the client posts a repository
-  intent. This intent is the same as an intent posted from inside that
-  repository.
-- If the paths are in two or more repositories, the client posts a project
-  intent. This intent includes a `repositories` field. The field divides the
-  paths by repository. The registry uses the field for collision checks
-  across repositories.
+  root, then maps each path to a child repository.
+- Paths that all sit in one child post a repository intent. It is the same as
+  an intent posted from inside that repository.
+- Paths across two or more repositories post a project intent with a
+  `repositories` field. The field divides the paths by repository, and the
+  registry uses it for collision checks across repositories.
 - When you update or complete an intent, the client first asks the registry
-  where the intent is stored. The client does not keep this state itself.
-- The `list_intents` pre-planning check sees only project intents. The
+  where the intent is stored. The client keeps no such state itself.
+- The `list_intents` pre-planning check sees project intents only. The
   registry does the full cross-repository check when you post.
-- The session-end stop hook also checks the child repositories of the
-  project. An open intent in a child repository keeps the session open.
+- The session-end stop hook also checks the project's child repositories. An
+  open intent in a child repository keeps the session open.
 - The installer keeps a project pin as it is. It does not replace it, and it
   does not invent one.
 
@@ -195,63 +186,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workspace. This is the same rule that rejects a path that points out of a
   repository.
 
-## [0.9.2] — 2026-08-09
+## [0.9.2] - 2026-08-09
 
 ### Added
 - `.flightplan.toml` accepts a second shape: `target`/`target_id` plus a
-  readable `name`, alongside the existing `repo` name pin. Both are read
-  everywhere (MCP client, installer, stop hook). When an id is pinned, posts
-  carry it and go under the pinned name. Reads are untouched by routing: a
-  `list_intents` query naming this repo gains the id, while one naming another
-  repo — or naming none — goes exactly as asked, so cross-repo history queries
-  keep working. The session-end stop hook sends the id alongside the name on
-  its check, so a drifted name cannot point it at the wrong repo. The client
-  never asks the service to turn a name into an id.
-- `getflightplan install` preserves a pinned `target_id` (and its `target` and
-  `name`) when it regenerates the managed pin file. It never invents one.
+  readable `name`. The existing `repo` name pin still works. The MCP client,
+  the installer, and the stop hook read both shapes.
+- When the file pins an id, a post carries the id and uses the pinned name.
+  Routing does not change reads. The client never asks the service to turn a
+  name into an id.
+- A `list_intents` query that names this repository gains the id. A query that
+  names another repository, or no repository, goes exactly as you asked. So
+  history queries across repositories keep working.
+- The session-end stop hook sends the id with the name on its check. A name
+  that drifted cannot point the hook at the wrong repository.
+- `getflightplan install` keeps a pinned `target_id`, `target`, and `name`
+  when it regenerates the managed pin file. It never invents an id.
 
 ### Changed
-- The agent snippet's registry-unavailable fallback now points the user at
-  `uvx getflightplan install` instead of only mentioning the failure.
-- `touches`, `files`, and `overlaps` are canonicalized to repository-relative
-  POSIX paths before they are sent, so the same file names the same string from
-  the repo root, a nested directory, or a linked worktree. Glob patterns keep
-  their pattern part. Inside a repository, values resolving outside it are
-  rejected as a tool error and never sent; outside a git repo nothing is
-  rewritten or rejected.
+- The fallback text in the agent snippet now points you at
+  `uvx getflightplan install`. Before, the text only mentioned the failure.
+- The client changes `touches`, `files`, and `overlaps` to POSIX paths
+  relative to the repository before it sends them. So the same file gives the
+  same string from the repository root, a nested directory, or a linked
+  worktree. A glob pattern keeps its pattern part.
+- Inside a repository, the client refuses a value that resolves outside the
+  repository. It reports a tool error and sends nothing. Outside a git
+  repository, the client changes nothing and refuses nothing.
 
-## [0.9.0] — 2026-08-03
+## [0.9.0] - 2026-08-03
 
 ### Added
-- First PyPI release. Install with `uvx getflightplan install`; the GitHub
-  source install still works when you need to pin a commit.
-- `getflightplan uninstall`: removes everything install wrote in a repo —
-  managed snippet blocks, `.flightplan.toml`, the `/registry-digest` command,
-  the stop hook and its settings wiring. `--dry-run` previews; `--purge-key`
-  also deletes the machine-level saved key; MCP deregistration is offered
-  interactively (default no — registrations are machine-wide).
-- Trust docs: `SECURITY.md` (private reporting via security@getflightplan.com
-  or GitHub advisories) and `docs/data-flow.md` (what leaves your machine,
-  what never does, and what is stored where).
-- `getflightplan install` now inspects existing MCP registrations instead of
-  only checking the name. A registration that points at the old GitHub source,
-  a local checkout, or the legacy `intent-registry` name is reported as stale
-  and the installer offers to re-register it.
+- First PyPI release. Install with `uvx getflightplan install`. The GitHub
+  source install still works, for when you need to pin a commit.
+- `getflightplan uninstall` removes everything install wrote in a repository.
+  That covers the managed snippet blocks, `.flightplan.toml`, the
+  `/registry-digest` command, and the stop hook with its settings. `--dry-run`
+  shows a preview, and `--purge-key` also deletes the saved key.
+- `getflightplan uninstall` asks you before it removes an MCP registration.
+  The default answer is no, because a registration applies to the whole
+  machine.
+- Two trust documents. `SECURITY.md` tells you how to report a problem
+  privately, at security@getflightplan.com or through a GitHub advisory.
+  `docs/data-flow.md` tells you what leaves your machine, what never leaves,
+  and where the service stores each item.
+- `getflightplan install` now examines each existing MCP registration, not
+  just its name. It reports one as stale when it points at the old GitHub
+  source, points at a local checkout, or uses the old `intent-registry` name.
+  Install then offers to register it again.
+
 ### Changed
 - The install command is now `uvx getflightplan install`, straight from PyPI.
-  Generated registrations run `uvx getflightplan mcp` (no `--from`).
-- Snippet warn rule softened: when an overlap is the very work the agent was
-  asked to act on, or the task is read-only, the agent mentions it and keeps
-  going instead of pausing for confirmation.
+  A generated registration runs `uvx getflightplan mcp`, without `--from`.
+- The snippet has a softer rule for a `warn` overlap. The agent mentions the
+  overlap and keeps going when it is the very work you asked for, or the task
+  is read-only. Before, the agent paused for confirmation.
 
-## [0.1] — 2026-07-30
+## [0.1] - 2026-07-30
 
 ### Added
-- Initial public release (package 0.9.0). `getflightplan install|mcp`: the MCP
-  stdio client and a one-command install kit — writes the agent snippet into
-  `CLAUDE.md`/`AGENTS.md` between managed markers, pins the repo name in
-  `.flightplan.toml`, installs the `/registry-digest` command and the
-  session-end stop hook, then verifies and offers to fix MCP registration for
-  Claude Code and Codex (one key prompt, saved-key reuse, re-verify).
-  Pre-PyPI install: `uvx --from git+https://github.com/sledmonkey/getflightplan
-  getflightplan install`. Apache-2.0.
+- Initial public release (package 0.9.0). It gives two commands:
+  `getflightplan mcp`, the MCP stdio client, and `getflightplan install`, a
+  one-command install kit. Apache-2.0.
+- Install writes the agent snippet into `CLAUDE.md` and `AGENTS.md`, between
+  managed markers. It pins the repository name in `.flightplan.toml`, and
+  installs the `/registry-digest` command and the session-end stop hook.
+- Install then verifies the MCP registration for Claude Code and Codex, and
+  offers to fix one that is wrong. It asks for the key one time, uses the
+  saved key after that, and verifies again.
+- Before PyPI, install with
+  `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
+
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/sledmonkey/getflightplan/compare/v0.13.2...v0.13.3
+[0.13.2]: https://github.com/sledmonkey/getflightplan/compare/v0.13.0...v0.13.2
+[0.13.0]: https://github.com/sledmonkey/getflightplan/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/sledmonkey/getflightplan/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/sledmonkey/getflightplan/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/sledmonkey/getflightplan/compare/v0.9.2...v0.10.0
+[0.9.2]: https://github.com/sledmonkey/getflightplan/compare/v0.9.0...v0.9.2
+[0.9.0]: https://github.com/sledmonkey/getflightplan/compare/v0.1...v0.9.0
+[0.1]: https://github.com/sledmonkey/getflightplan/releases/tag/v0.1
