@@ -6,7 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-08-18
+
+### Added
+- `glama.json` at the repo root claims the FlightPlan listing in the Glama
+  MCP directory.
+
 ### Changed
+- The README now says the hosted service is in beta, not private beta.
+  Anyone can sign in with a GitHub account; there is no access request.
 - `docs/data-flow.md` now documents the one identity exception. Login sends
   your machine hostname once, as the label for the new credential. No intent
   call sends it, and nothing else about the machine goes out.
@@ -257,7 +265,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.3...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.4...HEAD
+[0.13.4]: https://github.com/sledmonkey/getflightplan/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/sledmonkey/getflightplan/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/sledmonkey/getflightplan/compare/v0.13.0...v0.13.2
 [0.13.0]: https://github.com/sledmonkey/getflightplan/compare/v0.12.0...v0.13.0
