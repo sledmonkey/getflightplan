@@ -27,7 +27,7 @@ That installs FlightPlan for Claude Code. For Codex, append
 The first time on a machine, run `uvx getflightplan login` next — it
 connects your account and finishes the MCP setup.
 
-The hosted service is in private beta; request access at
+The hosted service is in beta; sign in with your GitHub account at
 [getflightplan.com](https://getflightplan.com). The package is on PyPI, so the
 command above is all you need. To pin a branch or commit instead, install from
 the source:
