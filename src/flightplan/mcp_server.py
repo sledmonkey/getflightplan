@@ -28,7 +28,8 @@ A project pin also changes one read. A collision check with globs asks the
 workspace and each child repository that the globs touch. Then the client
 merges the results into one list. See list_intents.
 
-Env: FLIGHTPLAN_URL, FLIGHTPLAN_API_KEY.
+Env: FLIGHTPLAN_API_KEY (required), FLIGHTPLAN_URL (defaults to the hosted
+service, config.DEFAULT_URL).
 """
 
 import asyncio
@@ -69,12 +70,13 @@ mcp = FastMCP(
 
 
 def _client() -> httpx.AsyncClient:
-    url = os.environ.get("FLIGHTPLAN_URL", "").strip()
+    url = os.environ.get("FLIGHTPLAN_URL", "").strip() or config.DEFAULT_URL
     key = os.environ.get("FLIGHTPLAN_API_KEY", "").strip()
-    if not url or not key:
+    if not key:
         raise RuntimeError(
-            "flightplan MCP server is not configured: set FLIGHTPLAN_URL "
-            "and FLIGHTPLAN_API_KEY in the MCP server's env (see the FlightPlan README)."
+            "flightplan MCP server has no credential: set FLIGHTPLAN_API_KEY "
+            "in the MCP server's env, or run `uvx getflightplan login` "
+            "(see the FlightPlan README)."
         )
     return httpx.AsyncClient(
         base_url=url.rstrip("/"),

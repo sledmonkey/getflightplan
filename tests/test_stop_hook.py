@@ -27,7 +27,11 @@ def run_hook(stdin: dict, url: str, cwd: str) -> tuple[int, str]:
         [sys.executable, SCRIPT],
         input=json.dumps(stdin),
         capture_output=True, text=True, timeout=15, cwd=cwd,
-        env={"PATH": "/usr/bin:/bin", "FLIGHTPLAN_URL": url, "FLIGHTPLAN_API_KEY": "k"},
+        env={
+            "PATH": "/usr/bin:/bin", "FLIGHTPLAN_URL": url, "FLIGHTPLAN_API_KEY": "k",
+            # Keep the block-memory state file inside the test dir, not ~/.cache.
+            "XDG_CACHE_HOME": cwd,
+        },
     )
     return proc.returncode, proc.stdout
 
@@ -97,6 +101,91 @@ def test_never_loops(tmp_path):
     try:
         code, out = run_hook({"stop_hook_active": True}, url, str(tmp_path))
         assert code == 0 and out.strip() == ""
+    finally:
+        server.shutdown()
+
+
+def test_never_loops_without_the_flag(tmp_path):
+    # Cursor runs these hooks but never sends stop_hook_active, so the flag
+    # alone let the block repeat forever. The on-disk guard catches the
+    # repeat: same session, same intent set — block once, then allow.
+    server, url = stub_registry([{"id": "y" * 36, "author": "brad", "summary": "s"}])
+    try:
+        payload = {"session_id": "sess-1"}
+        code, out = run_hook(payload, url, str(tmp_path))
+        assert code == 0 and json.loads(out)["decision"] == "block"
+        for _ in range(2):  # every later stop passes, not just the next one
+            code, out = run_hook(payload, url, str(tmp_path))
+            assert code == 0 and out.strip() == ""
+    finally:
+        server.shutdown()
+
+
+def test_block_memory_is_per_session_and_per_intent_set(tmp_path):
+    server, url = stub_registry([{"id": "y" * 36, "author": "brad", "summary": "s"}])
+    try:
+        code, out = run_hook({"session_id": "sess-1"}, url, str(tmp_path))
+        assert json.loads(out)["decision"] == "block"
+        # A different session still gets its own one nag.
+        code, out = run_hook({"session_id": "sess-2"}, url, str(tmp_path))
+        assert json.loads(out)["decision"] == "block"
+    finally:
+        server.shutdown()
+    # A changed intent set is fresh news: sess-1 gets nagged again.
+    server, url = stub_registry([{"id": "z" * 36, "author": "brad", "summary": "s"}])
+    try:
+        code, out = run_hook({"session_id": "sess-1"}, url, str(tmp_path))
+        assert json.loads(out)["decision"] == "block"
+    finally:
+        server.shutdown()
+
+
+def test_never_loops_with_an_empty_payload(tmp_path):
+    # A harness that identifies the session in no way we know: the guard
+    # degrades to cwd-keyed memory and still breaks the loop.
+    server, url = stub_registry([{"id": "y" * 36, "author": "brad", "summary": "s"}])
+    try:
+        code, out = run_hook({}, url, str(tmp_path))
+        assert code == 0 and json.loads(out)["decision"] == "block"
+        code, out = run_hook({}, url, str(tmp_path))
+        assert code == 0 and out.strip() == ""
+    finally:
+        server.shutdown()
+
+
+def test_cursor_payload_keys_per_conversation(tmp_path):
+    # The payload Cursor actually sends: conversation_id, no session_id, no
+    # stop_hook_active. One nag per chat, then quiet; another chat in the
+    # same repo still gets its own nag.
+    server, url = stub_registry([{"id": "y" * 36, "author": "brad", "summary": "s"}])
+    try:
+        code, out = run_hook(
+            {"conversation_id": "conv-1", "loop_count": 1}, url, str(tmp_path)
+        )
+        assert code == 0 and json.loads(out)["decision"] == "block"
+        code, out = run_hook(
+            {"conversation_id": "conv-1", "loop_count": 2}, url, str(tmp_path)
+        )
+        assert code == 0 and out.strip() == ""
+        code, out = run_hook({"conversation_id": "conv-2"}, url, str(tmp_path))
+        assert code == 0 and json.loads(out)["decision"] == "block"
+    finally:
+        server.shutdown()
+
+
+def test_claude_code_later_stop_still_nags(tmp_path):
+    # Claude Code sends the stop_hook_active KEY on every stop — false on
+    # each fresh attempt. There the flag is the only guard: a later stop in
+    # the same conversation with the same open intents must block again
+    # (ROADMAP 9 — the end-of-session nag is the point), never be silenced
+    # by the disk memory.
+    server, url = stub_registry([{"id": "y" * 36, "author": "brad", "summary": "s"}])
+    try:
+        for _ in range(2):
+            code, out = run_hook(
+                {"stop_hook_active": False, "session_id": "sess-1"}, url, str(tmp_path)
+            )
+            assert code == 0 and json.loads(out)["decision"] == "block"
     finally:
         server.shutdown()
 

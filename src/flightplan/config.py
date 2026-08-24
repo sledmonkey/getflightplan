@@ -37,6 +37,9 @@ from typing import NamedTuple
 
 PIN_FILENAME = ".flightplan.toml"
 
+# The hosted service. Every consumer falls back to it when nothing overrides.
+DEFAULT_URL = "https://api.getflightplan.com"
+
 
 class Pin(NamedTuple):
     """What the pin file says. Every field is optional — an absent or

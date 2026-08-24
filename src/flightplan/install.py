@@ -40,7 +40,7 @@ from . import config
 
 # The service's public default. An existing pin or --url flag overrides it
 # (precedence in `_resolve`).
-DEFAULT_URL = "https://api.getflightplan.com"
+DEFAULT_URL = config.DEFAULT_URL
 
 # What generated registrations and guidance lines run. The package is on PyPI,
 # so the bare name is enough and `uvx --from` is redundant (ROADMAP 36). The git

@@ -90,20 +90,27 @@ def test_dry_run_removes_nothing(tmp_path):
 
 def test_purge_key(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     key_file = install._write_key_file("sekret")
     assert key_file.exists()
+    blocks = tmp_path / "home" / ".cache" / "flightplan" / "stop_hook_blocks.json"
+    blocks.parent.mkdir(parents=True)
+    blocks.write_text("{}")
     repo = tmp_path / "repo"
     repo.mkdir()
     _git_init(repo)
 
-    # Default: the machine-level key survives an uninstall.
+    # Default: the machine-level key and block memory survive an uninstall.
     statuses = uninstall.run(repo, dry_run=False)
     assert "~/.config/flightplan/env" not in statuses
     assert key_file.exists()
+    assert blocks.exists()
 
     statuses = uninstall.run(repo, dry_run=False, purge_key=True)
     assert statuses["~/.config/flightplan/env"] == "removed"
     assert not key_file.exists()
+    assert statuses["~/.cache/flightplan/stop_hook_blocks.json"] == "removed"
+    assert not blocks.exists()
 
 
 def test_legacy_hook_wiring_removed(tmp_path):

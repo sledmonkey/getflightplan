@@ -36,6 +36,21 @@ with a reason telling the agent to check `list_intents(session="current")`
 (the client-side alias that DOES know the session) and complete its own.
 `stop_hook_active` guards the retry loop: the second stop always passes.
 
+That flag is Claude Code's. Other harnesses run these hooks without it —
+Cursor re-fires the hook on every stop with no flag, and a hook that trusted
+the flag alone re-blocked forever. The payload itself tells the harnesses
+apart: Claude Code sends the `stop_hook_active` key on EVERY stop (false on a
+fresh attempt), Cursor never sends it.
+
+So the guard splits on that key. Present → Claude Code: the flag stays the
+only guard, because there a LATER stop in the same conversation must nag
+again — an agent that renews its intent, works on, and ends hours later
+still gets the end-of-session nag this hook exists for. Absent → Cursor
+path: each block is recorded in a state file under the XDG cache dir, keyed
+by (session, repo, set of active intent ids), and a stop that matches a
+recorded key passes. When the hook cannot record a block, it does not
+block — a nag it cannot remember is a nag it would repeat forever.
+
 Advisory rule, same as everything else in this system: any failure — missing
 config, unreachable registry, bad JSON — allows the stop. This hook must never
 trap a user in a session.
@@ -43,17 +58,20 @@ trap a user in a session.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 TIMEOUT = 4  # seconds; a slow registry must not make ending a session slow
+BLOCK_MEMORY = 24 * 3600  # seconds a recorded block keeps suppressing repeats
 
 
 def _find_toml() -> Path | None:
@@ -157,6 +175,62 @@ def active_intents(
         return json.loads(resp.read())["intents"]
 
 
+def _state_file() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME", "").strip()
+    root = Path(base) if base else Path.home() / ".cache"
+    return root / "flightplan" / "stop_hook_blocks.json"
+
+
+def _block_key(payload: dict, repo: str, intents: list[dict]) -> str:
+    """One key per nag: this session, this repo, this exact set of open
+    intents. A new intent changes the key, so it earns a fresh nag."""
+    session = ""
+    for field in ("session_id", "transcript_path", "conversation_id", "thread_id"):
+        value = payload.get(field)
+        if isinstance(value, str) and value:
+            session = value
+            break
+    if not session:
+        # A harness that identifies the session in no way we know degrades to
+        # one nag per (repo, intent set) per machine per BLOCK_MEMORY.
+        session = str(Path.cwd())
+    ids = ",".join(sorted(i.get("id", "") for i in intents))
+    return hashlib.sha256(f"{session}\n{repo}\n{ids}".encode()).hexdigest()
+
+
+def _already_blocked(key: str) -> bool:
+    try:
+        stamp = json.loads(_state_file().read_text()).get(key)
+        return isinstance(stamp, (int, float)) and time.time() - stamp < BLOCK_MEMORY
+    except Exception:
+        return False
+
+
+def _record_block(key: str) -> bool:
+    """Remember this block; prune stale entries. Returns False when the record
+    did not persist — then the caller must allow the stop, because a nag the
+    hook cannot remember is a nag it would repeat forever."""
+    path = _state_file()
+    try:
+        try:
+            entries = json.loads(path.read_text())
+        except Exception:
+            entries = {}
+        if not isinstance(entries, dict):
+            entries = {}
+        now = time.time()
+        entries = {
+            k: v for k, v in entries.items()
+            if isinstance(v, (int, float)) and now - v < BLOCK_MEMORY
+        }
+        entries[key] = now
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(entries))
+        return True
+    except Exception:
+        return False
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -169,12 +243,23 @@ def main() -> int:
     if cfg is None:
         return 0
     target, target_id = pinned_target()
+    repo = repo_name()
     try:
-        intents = active_intents(*cfg, repo_name(), target_id, target == "project")
+        intents = active_intents(*cfg, repo, target_id, target == "project")
     except Exception:
         return 0  # advisory: an unreachable registry never traps a session
     if not intents:
         return 0
+
+    # Second loop guard, only when the payload has no stop_hook_active key at
+    # all (Cursor): block once per (session, repo, intent set), remembered on
+    # disk. Claude Code sends the key on every stop and keeps the flag as its
+    # only guard — the disk memory would silence the later stops that must
+    # still nag. Unrecordable → allow; this hook must never trap a session.
+    if "stop_hook_active" not in payload:
+        key = _block_key(payload, repo, intents)
+        if _already_blocked(key) or not _record_block(key):
+            return 0
 
     listing = "; ".join(
         f"{i['id'][:8]} ({i['author']}): {i['summary'][:80]}" for i in intents[:5]

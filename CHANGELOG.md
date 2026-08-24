@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-08-24
+
+### Changed
+- The MCP server no longer requires `FLIGHTPLAN_URL`. It defaults to the
+  hosted service, so a directly-launched server needs only
+  `FLIGHTPLAN_API_KEY`. The README documents the exact server command,
+  `uvx getflightplan mcp` — a bare `getflightplan` prints help and exits.
+
+### Fixed
+- The stop hook no longer loops on harnesses that do not send
+  `stop_hook_active` (Cursor runs Claude Code hooks without it). When that
+  field is absent, the hook records each block in
+  `~/.cache/flightplan/stop_hook_blocks.json` and passes a repeat stop for
+  the same session and intent set; `uninstall --purge-key` removes the file.
+  Claude Code behavior is unchanged — the flag guards the retry, and a later
+  stop still nags.
+
 ## [0.13.4] - 2026-08-18
 
 ### Added
@@ -265,7 +282,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.4...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...HEAD
+[0.13.5]: https://github.com/sledmonkey/getflightplan/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/sledmonkey/getflightplan/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/sledmonkey/getflightplan/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/sledmonkey/getflightplan/compare/v0.13.0...v0.13.2
