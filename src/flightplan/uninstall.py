@@ -15,7 +15,7 @@ every repo on this machine — so they are only removed on explicit
 confirmation. The saved API key
 (`~/.config/flightplan/env`) is machine-level too and is kept unless
 `--purge-key` is passed; the stop hook's block-memory cache
-(`~/.cache/flightplan/stop_hook_blocks.json`, hashes and timestamps only)
+(`~/.cache/flightplan/stop_hook_blocks/`, hash-named empty markers only)
 goes with it.
 
 Advisory like install: missing pieces are reported, never an error. Stdlib
@@ -240,21 +240,28 @@ def run(
         else:
             statuses["~/.config/flightplan/env"] = "absent"
         # The stop hook's block memory rides along: machine-level, no secrets
-        # (hashes and timestamps), pointless once the key is gone.
+        # (hash-named empty markers), pointless once the key is gone. One
+        # marker file per nag now; an earlier release wrote a single JSON
+        # file — both go.
         cache_base = os.environ.get("XDG_CACHE_HOME", "").strip()
         cache_root = Path(cache_base) if cache_base else Path.home() / ".cache"
-        blocks = cache_root / "flightplan" / "stop_hook_blocks.json"
-        if blocks.exists():
-            statuses["~/.cache/flightplan/stop_hook_blocks.json"] = "removed"
-            if not dry_run:
-                blocks.unlink()
-                try:
-                    if not any(blocks.parent.iterdir()):
-                        blocks.parent.rmdir()
-                except OSError:
-                    pass
-        else:
-            statuses["~/.cache/flightplan/stop_hook_blocks.json"] = "absent"
+        blocks_dir = cache_root / "flightplan" / "stop_hook_blocks"
+        legacy_blocks = cache_root / "flightplan" / "stop_hook_blocks.json"
+        found = blocks_dir.is_dir() or legacy_blocks.exists()
+        statuses["~/.cache/flightplan/stop_hook_blocks"] = (
+            "removed" if found else "absent"
+        )
+        if found and not dry_run:
+            shutil.rmtree(blocks_dir, ignore_errors=True)
+            try:
+                legacy_blocks.unlink()
+            except OSError:
+                pass
+            try:
+                if not any(blocks_dir.parent.iterdir()):
+                    blocks_dir.parent.rmdir()
+            except OSError:
+                pass
 
     return statuses
 

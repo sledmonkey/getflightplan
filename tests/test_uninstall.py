@@ -93,9 +93,12 @@ def test_purge_key(tmp_path, monkeypatch):
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     key_file = install._write_key_file("sekret")
     assert key_file.exists()
-    blocks = tmp_path / "home" / ".cache" / "flightplan" / "stop_hook_blocks.json"
-    blocks.parent.mkdir(parents=True)
-    blocks.write_text("{}")
+    # Both block-memory shapes: the marker dir, and the 0.13.5 JSON file.
+    blocks_dir = tmp_path / "home" / ".cache" / "flightplan" / "stop_hook_blocks"
+    blocks_dir.mkdir(parents=True)
+    (blocks_dir / ("a" * 64)).touch()
+    legacy = blocks_dir.parent / "stop_hook_blocks.json"
+    legacy.write_text("{}")
     repo = tmp_path / "repo"
     repo.mkdir()
     _git_init(repo)
@@ -104,13 +107,14 @@ def test_purge_key(tmp_path, monkeypatch):
     statuses = uninstall.run(repo, dry_run=False)
     assert "~/.config/flightplan/env" not in statuses
     assert key_file.exists()
-    assert blocks.exists()
+    assert blocks_dir.exists()
 
     statuses = uninstall.run(repo, dry_run=False, purge_key=True)
     assert statuses["~/.config/flightplan/env"] == "removed"
     assert not key_file.exists()
-    assert statuses["~/.cache/flightplan/stop_hook_blocks.json"] == "removed"
-    assert not blocks.exists()
+    assert statuses["~/.cache/flightplan/stop_hook_blocks"] == "removed"
+    assert not blocks_dir.exists()
+    assert not legacy.exists()
 
 
 def test_legacy_hook_wiring_removed(tmp_path):

@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `install --agent both`. Use `all` or `claude,codex`. More agents are
   coming, so a pairwise keyword no longer says anything useful.
 
+### Fixed
+- The stop hook's block memory is now one marker file per nag, created with
+  exclusive open, in `~/.cache/flightplan/stop_hook_blocks/`. The 0.13.5
+  shared JSON file lost records when sessions wrote it at the same time, so
+  some sessions nagged again. `uninstall --purge-key` removes the directory,
+  and the old file with it.
+
 ## [0.13.5] - 2026-08-24
 
 ### Changed

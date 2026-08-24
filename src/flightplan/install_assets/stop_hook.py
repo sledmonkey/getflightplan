@@ -46,10 +46,13 @@ So the guard splits on that key. Present → Claude Code: the flag stays the
 only guard, because there a LATER stop in the same conversation must nag
 again — an agent that renews its intent, works on, and ends hours later
 still gets the end-of-session nag this hook exists for. Absent → Cursor
-path: each block is recorded in a state file under the XDG cache dir, keyed
-by (session, repo, set of active intent ids), and a stop that matches a
-recorded key passes. When the hook cannot record a block, it does not
-block — a nag it cannot remember is a nag it would repeat forever.
+path: each delivered nag is one marker file under the XDG cache dir, named
+by the SHA-256 of (session, repo, set of active intent ids), and a stop
+that finds a fresh marker passes. Markers are created with exclusive open —
+concurrent sessions each keep their own record, where a shared
+read-modify-write file lost records under concurrency and re-nagged the
+losers. When the hook cannot record a block, it does not block — a nag it
+cannot remember is a nag it would repeat forever.
 
 Advisory rule, same as everything else in this system: any failure — missing
 config, unreachable registry, bad JSON — allows the stop. This hook must never
@@ -175,10 +178,10 @@ def active_intents(
         return json.loads(resp.read())["intents"]
 
 
-def _state_file() -> Path:
+def _state_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME", "").strip()
     root = Path(base) if base else Path.home() / ".cache"
-    return root / "flightplan" / "stop_hook_blocks.json"
+    return root / "flightplan" / "stop_hook_blocks"
 
 
 def _block_key(payload: dict, repo: str, intents: list[dict]) -> str:
@@ -198,36 +201,50 @@ def _block_key(payload: dict, repo: str, intents: list[dict]) -> str:
     return hashlib.sha256(f"{session}\n{repo}\n{ids}".encode()).hexdigest()
 
 
-def _already_blocked(key: str) -> bool:
+def _prune(now: float) -> None:
+    """Best-effort: drop markers past BLOCK_MEMORY so the dir stays small.
+    A marker another process deletes first, or cannot be deleted, is fine —
+    each file stands alone."""
     try:
-        stamp = json.loads(_state_file().read_text()).get(key)
-        return isinstance(stamp, (int, float)) and time.time() - stamp < BLOCK_MEMORY
-    except Exception:
-        return False
+        for marker in _state_dir().iterdir():
+            try:
+                if now - marker.stat().st_mtime >= BLOCK_MEMORY:
+                    marker.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
-def _record_block(key: str) -> bool:
-    """Remember this block; prune stale entries. Returns False when the record
-    did not persist — then the caller must allow the stop, because a nag the
-    hook cannot remember is a nag it would repeat forever."""
-    path = _state_file()
+def _should_block(key: str) -> bool:
+    """One empty marker file per delivered nag, created with exclusive open.
+    No read-modify-write exists, so concurrent sessions cannot lose each
+    other's records — the failure mode of the shared JSON file this replaced.
+    True = no fresh marker existed and ours is now on disk. Any failure reads
+    False: a nag the hook cannot remember is a nag it would repeat forever."""
+    marker = _state_dir() / key
+    now = time.time()
     try:
-        try:
-            entries = json.loads(path.read_text())
-        except Exception:
-            entries = {}
-        if not isinstance(entries, dict):
-            entries = {}
-        now = time.time()
-        entries = {
-            k: v for k, v in entries.items()
-            if isinstance(v, (int, float)) and now - v < BLOCK_MEMORY
-        }
-        entries[key] = now
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(entries))
+        if now - marker.stat().st_mtime < BLOCK_MEMORY:
+            return False  # this exact nag was already delivered
+        # A stale marker: refresh it and nag once more. Two processes can
+        # race here and both nag — rare, bounded, cheaper than a lock.
+        os.utime(marker, (now, now))
+        _prune(now)
         return True
-    except Exception:
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        with open(marker, "x"):
+            pass
+        _prune(now)
+        return True
+    except FileExistsError:
+        return False  # another process delivered this nag just now
+    except OSError:
         return False
 
 
@@ -252,13 +269,13 @@ def main() -> int:
         return 0
 
     # Second loop guard, only when the payload has no stop_hook_active key at
-    # all (Cursor): block once per (session, repo, intent set), remembered on
-    # disk. Claude Code sends the key on every stop and keeps the flag as its
-    # only guard — the disk memory would silence the later stops that must
-    # still nag. Unrecordable → allow; this hook must never trap a session.
+    # all (Cursor): block once per (session, repo, intent set), remembered as
+    # one marker file on disk. Claude Code sends the key on every stop and
+    # keeps the flag as its only guard — the disk memory would silence the
+    # later stops that must still nag. Unrecordable → allow; this hook must
+    # never trap a session.
     if "stop_hook_active" not in payload:
-        key = _block_key(payload, repo, intents)
-        if _already_blocked(key) or not _record_block(key):
+        if not _should_block(_block_key(payload, repo, intents)):
             return 0
 
     listing = "; ".join(
