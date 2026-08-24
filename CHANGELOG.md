@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-24
+
 ### Added
 - `--agent cursor`. It writes the agent snippet into `AGENTS.md`, which
   Cursor reads, and merges a `flightplan` entry into `~/.cursor/mcp.json`,
@@ -306,7 +308,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/sledmonkey/getflightplan/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/sledmonkey/getflightplan/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/sledmonkey/getflightplan/compare/v0.13.2...v0.13.3
