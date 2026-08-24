@@ -13,7 +13,9 @@ MCP registrations (`claude mcp` / `codex mcp`) are machine-level, not
 per-repo — removing one affects every repo on this machine — so they are only
 removed on explicit confirmation. The saved API key
 (`~/.config/flightplan/env`) is machine-level too and is kept unless
-`--purge-key` is passed.
+`--purge-key` is passed; the stop hook's block-memory cache
+(`~/.cache/flightplan/stop_hook_blocks.json`, hashes and timestamps only)
+goes with it.
 
 Advisory like install: missing pieces are reported, never an error. Stdlib
 only.
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -232,6 +235,22 @@ def run(
                     pass
         else:
             statuses["~/.config/flightplan/env"] = "absent"
+        # The stop hook's block memory rides along: machine-level, no secrets
+        # (hashes and timestamps), pointless once the key is gone.
+        cache_base = os.environ.get("XDG_CACHE_HOME", "").strip()
+        cache_root = Path(cache_base) if cache_base else Path.home() / ".cache"
+        blocks = cache_root / "flightplan" / "stop_hook_blocks.json"
+        if blocks.exists():
+            statuses["~/.cache/flightplan/stop_hook_blocks.json"] = "removed"
+            if not dry_run:
+                blocks.unlink()
+                try:
+                    if not any(blocks.parent.iterdir()):
+                        blocks.parent.rmdir()
+                except OSError:
+                    pass
+        else:
+            statuses["~/.cache/flightplan/stop_hook_blocks.json"] = "absent"
 
     return statuses
 

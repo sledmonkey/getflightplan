@@ -12,6 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `FLIGHTPLAN_API_KEY`. The README documents the exact server command,
   `uvx getflightplan mcp` — a bare `getflightplan` prints help and exits.
 
+### Fixed
+- The stop hook no longer loops on harnesses that do not send
+  `stop_hook_active` (Cursor runs Claude Code hooks without it). When that
+  field is absent, the hook records each block in
+  `~/.cache/flightplan/stop_hook_blocks.json` and passes a repeat stop for
+  the same session and intent set; `uninstall --purge-key` removes the file.
+  Claude Code behavior is unchanged — the flag guards the retry, and a later
+  stop still nags.
+
 ## [0.13.4] - 2026-08-18
 
 ### Added
