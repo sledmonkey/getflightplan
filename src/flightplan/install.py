@@ -9,7 +9,8 @@ client, that installs/updates every per-repo artifact the registry needs:
     both read by `config.py`: a `repo` name, or a `target_id` with a readable
     `name`. A pinned id is preserved verbatim across runs, never invented here.
   - the agent snippet, dropped into `CLAUDE.md` (Claude Code) and/or `AGENTS.md`
-    (Codex) between managed markers, with the repo name pinned into it.
+    (Codex and Cursor) between managed markers, with the repo name pinned into
+    it.
   - the `/registry-digest` command and the session-end stop hook (Claude Code),
     including the `.claude/settings.json` Stop wiring.
 
@@ -46,6 +47,33 @@ DEFAULT_URL = config.DEFAULT_URL
 # so the bare name is enough and `uvx --from` is redundant (ROADMAP 36). The git
 # URL still works and is what you pass to `--source` to pin a branch or commit.
 PACKAGE_SOURCE = "getflightplan"
+
+# Every agent this version knows, in the order reports and writes use.
+AGENTS = ("claude", "codex", "cursor")
+
+_AGENT_VALUES = f"valid: {', '.join(AGENTS)}, all, or a comma list"
+
+
+def parse_agents(value: str) -> tuple[str, ...]:
+    """Parse an `--agent` value into agent names: a comma list, or `all` for
+    every agent in AGENTS. The result is deduplicated and put in AGENTS order,
+    so a report reads the same whatever order the user typed. An unknown or
+    empty value raises, and argparse turns that into a usage error (exit 2)."""
+    wanted: set[str] = set()
+    for name in (part.strip() for part in value.split(",")):
+        if not name:
+            continue
+        if name == "all":
+            wanted.update(AGENTS)
+        elif name in AGENTS:
+            wanted.add(name)
+        else:
+            raise argparse.ArgumentTypeError(
+                f"unknown agent {name!r} — {_AGENT_VALUES}"
+            )
+    if not wanted:
+        raise argparse.ArgumentTypeError(f"no agent given — {_AGENT_VALUES}")
+    return tuple(name for name in AGENTS if name in wanted)
 
 
 def _uvx_argv(source: str) -> list[str]:
@@ -399,7 +427,7 @@ def _merge_settings(existing: dict) -> dict:
 def run(
     root: Path,
     *,
-    agent: str,
+    agents: tuple[str, ...],
     repo: str | None,
     url: str | None,
     dry_run: bool,
@@ -443,9 +471,11 @@ def run(
     # 2. The agent snippet block, into CLAUDE.md and/or AGENTS.md.
     block = _snippet_block(name)
     snippet_targets = []
-    if agent in ("claude", "both"):
+    if "claude" in agents:
         snippet_targets.append("CLAUDE.md")
-    if agent in ("codex", "both"):
+    # Cursor reads AGENTS.md too, so it shares the codex target. `_place_block`
+    # is idempotent, so asking for both still leaves one managed block.
+    if "codex" in agents or "cursor" in agents:
         snippet_targets.append("AGENTS.md")
     for fname in snippet_targets:
         path = root / fname
@@ -453,7 +483,7 @@ def run(
         write(fname, _place_block(original, block))
 
     # 3. Claude Code artifacts.
-    if agent in ("claude", "both"):
+    if "claude" in agents:
         write(".claude/commands/registry-digest.md", _asset_text("registry-digest.md"))
         write(STOP_HOOK_REL, _asset_text("stop_hook.py"))
         # Migration (ROADMAP 35): the pre-rename vendored hook is superseded;
@@ -662,6 +692,67 @@ def _codex_registration(
     return Registration(MISSING, None, "")
 
 
+def _cursor_dir() -> Path:
+    """Cursor's user directory. Resolved at call time so HOME (and tests) take
+    effect. Its existence is how we detect Cursor: Cursor.app usually puts no
+    binary on PATH, so `shutil.which` would report it missing on a machine that
+    has it."""
+    return Path.home() / ".cursor"
+
+
+def _cursor_config() -> Path:
+    """Cursor's user-level MCP config. Only this file is ever read or written —
+    a project `.cursor/mcp.json` gets committed, and our entry holds the
+    credential."""
+    return _cursor_dir() / "mcp.json"
+
+
+def _cursor_config_text() -> str:
+    """The config file's text, or "" when it is absent or unreadable."""
+    path = _cursor_config()
+    try:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+    except OSError:
+        return ""
+
+
+def _cursor_config_broken() -> bool:
+    """True when ~/.cursor/mcp.json exists but is not a JSON object. Such a
+    file is never rewritten — it may be hand-written config we would destroy —
+    so the user gets a warning and the entry to paste in."""
+    text = _cursor_config_text()
+    if not text.strip():
+        return False
+    try:
+        return not isinstance(json.loads(text), dict)
+    except (json.JSONDecodeError, ValueError):
+        return True
+
+
+def _cursor_registration(
+    source: str, url: str, key: str | None = None,
+) -> Registration:
+    """Same for ~/.cursor/mcp.json, parsed as JSON. A file we cannot parse
+    reads MISSING here and is reported by `_cursor_config_broken` instead: we
+    cannot see an entry in it, and we will not overwrite it either."""
+    text = _cursor_config_text()
+    if not text.strip():
+        return Registration(MISSING, None, "")
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return Registration(MISSING, None, "")
+    if not isinstance(data, dict):
+        return Registration(MISSING, None, "")
+
+    servers = data.get("mcpServers") or {}
+    if isinstance(servers, dict):
+        for name in ("flightplan", LEGACY_SERVER_NAME):
+            if name in servers:
+                return _classify(servers[name], name, source, url, key)
+    return Registration(MISSING, None, "")
+
+
 def _stop_key_available(root: Path) -> bool:
     if os.environ.get("FLIGHTPLAN_API_KEY", "").strip():
         return True
@@ -671,7 +762,7 @@ def _stop_key_available(root: Path) -> bool:
 
 
 def verify(
-    root: Path, *, agent: str, url: str, source: str = PACKAGE_SOURCE
+    root: Path, *, agents: tuple[str, ...], url: str, source: str = PACKAGE_SOURCE
 ) -> list[str]:
     """Advisory checks, one formatted line (or block) each. Never mutates
     anything; never prints a secret value. `source` is what a registration must
@@ -689,7 +780,7 @@ def verify(
         "your --url / FLIGHTPLAN_URL override if you set one"
     )
 
-    if agent in ("claude", "both"):
+    if "claude" in agents:
         reg = _claude_registration(root, source, url, key)
         if reg.status == CURRENT:
             lines.append("  ok   claude: flightplan MCP server is registered")
@@ -736,7 +827,7 @@ def verify(
                 "stores one"
             )
 
-    if agent in ("codex", "both"):
+    if "codex" in agents:
         reg = _codex_registration(source, url, key)
         args = ", ".join(f'"{a}"' for a in _uvx_argv(source)[1:])
         block = (
@@ -767,6 +858,43 @@ def verify(
                 "  !!   codex: flightplan not found in ~/.codex/config.toml — "
                 f"add:\n{block}"
             )
+
+    if "cursor" in agents:
+        block = _cursor_guidance(source, url)
+        if not _cursor_dir().exists():
+            # No ~/.cursor means no mcp.json either, so there is nothing to
+            # classify — say the same thing an absent binary says.
+            lines.append("  ..   cursor: Cursor is not on this machine — skipped")
+        elif _cursor_config_broken():
+            lines.append(
+                "  !!   cursor: ~/.cursor/mcp.json is not a JSON object — left "
+                f"unchanged; fix the file and re-run, or add by hand:\n{block}"
+            )
+        else:
+            reg = _cursor_registration(source, url, key)
+            if reg.status == CURRENT:
+                lines.append("  ok   cursor: flightplan MCP server is registered")
+            elif reg.status == STALE:
+                where = (
+                    f"under legacy name '{reg.name}'"
+                    if reg.name == LEGACY_SERVER_NAME
+                    else f"runs {reg.detail} — not the current "
+                    f"{_uvx_command(source)}"
+                )
+                lines.append(
+                    f"  ok?  cursor: flightplan is registered but {where}. "
+                    f"Replace it in ~/.cursor/mcp.json with:\n{block}"
+                )
+            elif key is None:
+                # Same as the claude line: pending, not broken.
+                lines.append(
+                    "  ..   cursor: not connected yet — the login does this"
+                )
+            else:
+                lines.append(
+                    "  !!   cursor: flightplan not found in ~/.cursor/mcp.json "
+                    f"— add:\n{block}"
+                )
 
     return lines
 
@@ -799,6 +927,25 @@ def _codex_guidance(source: str = PACKAGE_SOURCE) -> str:
         "         codex mcp add flightplan "
         "--env FLIGHTPLAN_URL=... --env FLIGHTPLAN_API_KEY=... "
         f"-- {_uvx_command(source)}"
+    )
+
+
+def _cursor_guidance(
+    source: str = PACKAGE_SOURCE, url: str = DEFAULT_URL,
+) -> str:
+    """The `mcpServers` entry to paste into ~/.cursor/mcp.json by hand. Cursor
+    ships no `mcp add` command, so the manual fix is the JSON itself. The key
+    is a placeholder — this text is printed, so it never carries a real one."""
+    args = ", ".join(f'"{a}"' for a in _uvx_argv(source)[1:])
+    return (
+        '         "mcpServers": {\n'
+        '           "flightplan": {\n'
+        '             "command": "uvx",\n'
+        f"             \"args\": [{args}],\n"
+        f'             "env": {{ "FLIGHTPLAN_URL": "{url}", '
+        '"FLIGHTPLAN_API_KEY": "<your-key>" }\n'
+        "           }\n"
+        "         }"
     )
 
 
@@ -932,6 +1079,48 @@ def _run_codex_register(url: str, key: str, source: str) -> bool:
         return False
 
 
+def _run_cursor_register(url: str, key: str, source: str) -> bool:
+    """Merge the flightplan entry into ~/.cursor/mcp.json. Cursor has no `mcp
+    add` command, so the file is edited here: every other server and every
+    other top-level key survives, and only `mcpServers.flightplan` is set. One
+    atomic write, mode 600 because the entry carries the credential — and
+    because it is one write, a stale entry is replaced in place with nothing to
+    restore. A file that is not a JSON object is left alone; the verify report
+    names it. Returns success."""
+    path = _cursor_config()
+    data: dict = {}
+    text = _cursor_config_text()
+    if text.strip():
+        try:
+            loaded = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return False
+        if not isinstance(loaded, dict):
+            return False
+        data = loaded
+
+    servers = data.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        return False
+
+    argv = _uvx_argv(source)
+    # A legacy-named entry goes when the current name arrives — the same
+    # migration `_mcp_remove` does for claude and codex. Left in place, Cursor
+    # would start two servers.
+    servers.pop(LEGACY_SERVER_NAME, None)
+    servers["flightplan"] = {
+        "command": argv[0],
+        "args": argv[1:],
+        "env": {"FLIGHTPLAN_URL": url, "FLIGHTPLAN_API_KEY": key},
+    }
+    data["mcpServers"] = servers
+    try:
+        _write_atomic(path, json.dumps(data, indent=2) + "\n", 0o600)
+    except OSError:
+        return False
+    return True
+
+
 def _mcp_remove(binary: str, name: str, *, scope: str | None = None) -> None:
     """Drop an existing registration before re-adding it: `mcp add` on a name
     that already exists is an error in some CLI versions, and a legacy-named
@@ -980,12 +1169,24 @@ def _restore_registration(binary: str, reg: Registration) -> bool:
         return False
 
 
-def _register_agents(root: Path, *, agent: str, url: str, source: str) -> bool:
+def _agent_present(name: str) -> bool:
+    """Is this agent on the machine? A binary on PATH for the CLI agents.
+    Cursor.app usually installs no binary, so its test is the ~/.cursor
+    directory — which we read and write inside, but never create."""
+    if name == "cursor":
+        return _cursor_dir().exists()
+    return bool(shutil.which(name))
+
+
+def _register_agents(
+    root: Path, *, agents: tuple[str, ...], url: str, source: str
+) -> bool:
     """Register the flightplan MCP server for the requested agents, without
     prompts. The credential comes from the env file only, and an entry
     carrying a different credential counts as stale — that is how a login
-    rotation reaches the registration. An agent whose binary is absent is
-    skipped silently; a missing or stale registration is fixed in place.
+    rotation reaches the registration. An agent that is not on the machine
+    (no binary on PATH — for Cursor, no ~/.cursor directory) is skipped
+    silently; a missing or stale registration is fixed in place.
     Returns True when anything changed — the caller reports the end state
     (install prints verify after this runs, so repairs come before the
     report)."""
@@ -997,38 +1198,51 @@ def _register_agents(root: Path, *, agent: str, url: str, source: str) -> bool:
 
     def fix(name: str, reg: Registration) -> None:
         nonlocal mutated
-        if reg.status == CURRENT or not shutil.which(name):
+        if reg.status == CURRENT or not _agent_present(name):
+            return
+        if name == "cursor" and _cursor_config_broken():
+            # The write would refuse anyway; skipping keeps the report to the
+            # one verify line that names the file and the fix.
             return
         removed = False
         if reg.status == STALE:
             print(f"  ok?  {name}: existing registration runs {reg.detail} "
                   "— replacing")
-            if reg.name:
+            # Cursor is one merged write, so a stale entry is overwritten in
+            # place — nothing to remove first, and nothing to put back.
+            if reg.name and name != "cursor":
                 _mcp_remove(name, reg.name, scope=reg.scope)
                 removed = True
-        registered = (
-            _run_claude_register(
+        if name == "claude":
+            registered = _run_claude_register(
                 url, key, source, scope=reg.scope or "user",
             )
-            if name == "claude"
-            else _run_codex_register(url, key, source)
-        )
+        elif name == "codex":
+            registered = _run_codex_register(url, key, source)
+        else:
+            registered = _run_cursor_register(url, key, source)
         if registered:
             print(f"  registered  flightplan MCP server ({name})")
             mutated = True
         else:
             # One short line; the manual command lives in the verify report
             # (install prints it right after this; from a login, rerunning
-            # install shows it).
-            print(f"  !!   {name} mcp add failed — run `uvx getflightplan "
+            # install shows it). Cursor has no `mcp add` to blame.
+            failed = (
+                "cursor: could not write ~/.cursor/mcp.json"
+                if name == "cursor" else f"{name} mcp add failed"
+            )
+            print(f"  !!   {failed} — run `uvx getflightplan "
                   "install` for the manual command")
             if removed and _restore_registration(name, reg):
                 print(f"  →    the previous {name} registration was put back")
 
-    if agent in ("claude", "both"):
+    if "claude" in agents:
         fix("claude", _claude_registration(root, source, url, key))
-    if agent in ("codex", "both"):
+    if "codex" in agents:
         fix("codex", _codex_registration(source, url, key))
+    if "cursor" in agents:
+        fix("cursor", _cursor_registration(source, url, key))
     return mutated
 
 
@@ -1056,8 +1270,12 @@ def main(argv: list[str] | None = None) -> int:
         description="Install/update this repo's FlightPlan artifacts, idempotently.",
     )
     parser.add_argument(
-        "--agent", choices=["claude", "codex", "both"], default="claude",
-        help="which agent's artifacts to write (default: claude)",
+        # argparse runs a string default through `type`, so the default
+        # arrives as a parsed tuple like any given value.
+        "--agent", type=parse_agents, default="claude",
+        help="which agents' artifacts to write — one name, a comma list "
+        f"({','.join(AGENTS)}), or `all` for every agent this version knows "
+        "(default: claude)",
     )
     parser.add_argument("--repo", default=None, help="set or change the pinned repo name")
     parser.add_argument("--url", default=None, help="override the registry url to pin (testing; defaults to the hosted service)")
@@ -1077,7 +1295,7 @@ def main(argv: list[str] | None = None) -> int:
     warnings: list[str] = []
     statuses = run(
         root,
-        agent=args.agent,
+        agents=args.agent,
         repo=args.repo,
         url=args.url,
         dry_run=args.dry_run,
@@ -1099,11 +1317,13 @@ def main(argv: list[str] | None = None) -> int:
     mutated = False
     if not args.dry_run:
         mutated = _register_agents(
-            root, agent=args.agent, url=resolved_url, source=args.source,
+            root, agents=args.agent, url=resolved_url, source=args.source,
         )
 
     print("verify:")
-    for line in verify(root, agent=args.agent, url=resolved_url, source=args.source):
+    for line in verify(
+        root, agents=args.agent, url=resolved_url, source=args.source
+    ):
         print(line)
     if mutated:
         print("  →    start a new agent session in this repo to pick up the "

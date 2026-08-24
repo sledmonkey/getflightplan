@@ -385,13 +385,14 @@ def register_mcp(url: str, source: str = install.PACKAGE_SOURCE) -> None:
     Install cannot register while the machine has no credential. The login is
     when one appears, so the registration runs here too — that is what keeps
     onboarding at two commands (decision bcdc4caa). No prompts, credential
-    from the env file only (decision 72315903); agents whose binary is absent
-    are skipped inside the registrar. Nothing here may fail the login: every
-    error becomes one printed line.
+    from the env file only (decision 72315903); agents not on the machine are
+    skipped inside the registrar (no binary on PATH — for Cursor, no ~/.cursor
+    directory). Nothing here may fail the login: every error becomes one
+    printed line.
     """
     try:
         if install._register_agents(
-            install._repo_root(), agent="both", url=url, source=source,
+            install._repo_root(), agents=install.AGENTS, url=url, source=source,
         ):
             print("  →    start a new agent session in this repo to pick up "
                   "the registration.")

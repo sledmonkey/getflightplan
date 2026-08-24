@@ -190,6 +190,42 @@ def test_claude_code_later_stop_still_nags(tmp_path):
         server.shutdown()
 
 
+def test_concurrent_sessions_all_keep_their_records(tmp_path):
+    # The 0.13.5 shared-JSON memory was an unlocked read-modify-write: 20
+    # simultaneous sessions kept 1 of 20 records, and the 19 losers nagged
+    # again. Marker files with exclusive creation keep every record — every
+    # session's second stop must be quiet.
+    server, url = stub_registry([{"id": "y" * 36, "author": "brad", "summary": "s"}])
+    env = {
+        "PATH": "/usr/bin:/bin", "FLIGHTPLAN_URL": url,
+        "FLIGHTPLAN_API_KEY": "k", "XDG_CACHE_HOME": str(tmp_path),
+    }
+    try:
+        procs = [
+            subprocess.Popen(
+                [sys.executable, SCRIPT],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, cwd=str(tmp_path), env=env,
+            )
+            for _ in range(20)
+        ]
+        # Feed and close every stdin BEFORE waiting on any child. Each child
+        # blocks in json.load(stdin), so a sequential communicate() would run
+        # the hooks one at a time and the race could never happen.
+        for i, proc in enumerate(procs):
+            proc.stdin.write(json.dumps({"session_id": f"sess-{i}"}))
+            proc.stdin.close()
+        outs = [proc.stdout.read() for proc in procs]
+        for proc in procs:
+            assert proc.wait(timeout=30) == 0
+        assert all(json.loads(out)["decision"] == "block" for out in outs)
+        for i in range(20):
+            code, out = run_hook({"session_id": f"sess-{i}"}, url, str(tmp_path))
+            assert code == 0 and out.strip() == "", f"sess-{i} lost its record"
+    finally:
+        server.shutdown()
+
+
 def test_registry_failure_allows_stop(tmp_path):
     # Advisory rule: an erroring registry must never trap a session.
     server, url = stub_registry(None, status=500)

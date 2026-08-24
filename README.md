@@ -22,8 +22,10 @@ From your repo's root:
 uvx getflightplan install
 ```
 
-That installs FlightPlan for Claude Code. For Codex, append
-`--agent codex` (or `--agent both`). The command is safe to re-run.
+That installs FlightPlan for Claude Code. For Codex or Cursor, append
+`--agent codex` or `--agent cursor`. `--agent` also takes a comma list
+(`--agent claude,cursor`) and `all`, which means every agent this version
+knows. The command is safe to re-run.
 The first time on a machine, run `uvx getflightplan login` next — it
 connects your account and finishes the MCP setup.
 

@@ -27,7 +27,7 @@ def test_install_then_uninstall_restores_tree(tmp_path):
     _git_init(tmp_path, "https://github.com/acme/coolproject.git")
     before = _snapshot(tmp_path)
 
-    install.run(tmp_path, agent="both", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=install.AGENTS, repo=None, url=None, dry_run=False)
     statuses = uninstall.run(tmp_path, dry_run=False)
 
     assert _snapshot(tmp_path) == before
@@ -49,7 +49,7 @@ def test_user_content_survives(tmp_path):
         ]}]},
     }))
 
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     statuses = uninstall.run(tmp_path, dry_run=False)
 
     # The snippet block is gone; the user's own content is intact.
@@ -79,7 +79,7 @@ def test_uninstall_on_clean_repo_is_a_noop(tmp_path):
 
 def test_dry_run_removes_nothing(tmp_path):
     _git_init(tmp_path, "https://github.com/acme/coolproject.git")
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     before = _snapshot(tmp_path)
 
     statuses = uninstall.run(tmp_path, dry_run=True)
@@ -93,9 +93,12 @@ def test_purge_key(tmp_path, monkeypatch):
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     key_file = install._write_key_file("sekret")
     assert key_file.exists()
-    blocks = tmp_path / "home" / ".cache" / "flightplan" / "stop_hook_blocks.json"
-    blocks.parent.mkdir(parents=True)
-    blocks.write_text("{}")
+    # Both block-memory shapes: the marker dir, and the 0.13.5 JSON file.
+    blocks_dir = tmp_path / "home" / ".cache" / "flightplan" / "stop_hook_blocks"
+    blocks_dir.mkdir(parents=True)
+    (blocks_dir / ("a" * 64)).touch()
+    legacy = blocks_dir.parent / "stop_hook_blocks.json"
+    legacy.write_text("{}")
     repo = tmp_path / "repo"
     repo.mkdir()
     _git_init(repo)
@@ -104,13 +107,14 @@ def test_purge_key(tmp_path, monkeypatch):
     statuses = uninstall.run(repo, dry_run=False)
     assert "~/.config/flightplan/env" not in statuses
     assert key_file.exists()
-    assert blocks.exists()
+    assert blocks_dir.exists()
 
     statuses = uninstall.run(repo, dry_run=False, purge_key=True)
     assert statuses["~/.config/flightplan/env"] == "removed"
     assert not key_file.exists()
-    assert statuses["~/.cache/flightplan/stop_hook_blocks.json"] == "removed"
-    assert not blocks.exists()
+    assert statuses["~/.cache/flightplan/stop_hook_blocks"] == "removed"
+    assert not blocks_dir.exists()
+    assert not legacy.exists()
 
 
 def test_legacy_hook_wiring_removed(tmp_path):
@@ -159,3 +163,122 @@ def test_cli_dispatches_uninstall(tmp_path, monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "uninstall (dry run)" in out
+
+
+# --- Cursor deregistration: a file edit, not a CLI call ---
+#
+# Machine-level like the others, so the default is no. Only the flightplan
+# entry ever goes; everything else in the file is the user's.
+
+def _cursor_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".cursor").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    # No claude/codex binary: the loop above the cursor offer stays quiet.
+    monkeypatch.setattr(uninstall.shutil, "which", lambda _cmd: None)
+    return home
+
+
+def _write_cursor(home, data) -> Path:
+    path = home / ".cursor" / "mcp.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
+def _answer(monkeypatch, reply: str) -> None:
+    monkeypatch.setattr("builtins.input", lambda _prompt: reply)
+
+
+def test_cursor_default_no_keeps_the_entry(tmp_path, monkeypatch):
+    home = _cursor_home(tmp_path, monkeypatch)
+    before = {"mcpServers": {"flightplan": {"command": "uvx"}}}
+    path = _write_cursor(home, before)
+    _answer(monkeypatch, "")  # a bare Enter is no
+
+    uninstall._offer_mcp_removal()
+
+    assert json.loads(path.read_text()) == before
+
+
+def test_cursor_yes_strips_only_the_flightplan_key(tmp_path, monkeypatch, capsys):
+    home = _cursor_home(tmp_path, monkeypatch)
+    path = _write_cursor(home, {
+        "mcpServers": {
+            "flightplan": {"command": "uvx"},
+            "other": {"command": "node", "args": ["server.js"]},
+        },
+        "someOtherSetting": {"keep": True},
+    })
+    _answer(monkeypatch, "y")
+
+    uninstall._offer_mcp_removal()
+
+    data = json.loads(path.read_text())
+    assert "flightplan" not in data["mcpServers"]
+    assert data["mcpServers"]["other"] == {"command": "node", "args": ["server.js"]}
+    assert data["someOtherSetting"] == {"keep": True}
+    assert "removed  flightplan MCP registration (cursor)" in capsys.readouterr().out
+
+
+def test_cursor_legacy_only_file_still_gets_the_offer(tmp_path, monkeypatch):
+    # A file holding only the old server name is still ours to offer on.
+    home = _cursor_home(tmp_path, monkeypatch)
+    path = _write_cursor(home, {
+        "mcpServers": {
+            uninstall.LEGACY_SERVER_NAME: {"command": "uvx", "args": ["x"]},
+            "other": {"command": "node"},
+        },
+    })
+    _answer(monkeypatch, "y")
+
+    uninstall._offer_mcp_removal()
+
+    servers = json.loads(path.read_text())["mcpServers"]
+    assert uninstall.LEGACY_SERVER_NAME not in servers
+    assert servers["other"] == {"command": "node"}
+
+
+def test_cursor_yes_also_removes_a_legacy_named_entry(tmp_path, monkeypatch):
+    # A leftover entry under the old server name is ours too — the one
+    # consent covers both, and other servers stay.
+    home = _cursor_home(tmp_path, monkeypatch)
+    path = _write_cursor(home, {
+        "mcpServers": {
+            "flightplan": {"command": "uvx"},
+            uninstall.LEGACY_SERVER_NAME: {"command": "uvx", "args": ["x"]},
+            "other": {"command": "node"},
+        },
+    })
+    _answer(monkeypatch, "y")
+
+    uninstall._offer_mcp_removal()
+
+    servers = json.loads(path.read_text())["mcpServers"]
+    assert "flightplan" not in servers
+    assert uninstall.LEGACY_SERVER_NAME not in servers
+    assert servers["other"] == {"command": "node"}
+
+
+def test_cursor_non_json_file_is_left_alone(tmp_path, monkeypatch, capsys):
+    home = _cursor_home(tmp_path, monkeypatch)
+    path = home / ".cursor" / "mcp.json"
+    broken = "{ this is not json"
+    path.write_text(broken)
+    # Nothing may prompt: there is no entry we can see to offer.
+    _answer(monkeypatch, "y")
+
+    uninstall._offer_mcp_removal()
+
+    assert path.read_text() == broken
+    assert "not a JSON object" in capsys.readouterr().out
+
+
+def test_cursor_without_an_entry_never_asks(tmp_path, monkeypatch):
+    home = _cursor_home(tmp_path, monkeypatch)
+    _write_cursor(home, {"mcpServers": {"other": {"command": "node"}}})
+
+    def refuse(_prompt):
+        raise AssertionError("nothing to remove, so nothing may be asked")
+
+    monkeypatch.setattr("builtins.input", refuse)
+    uninstall._offer_mcp_removal()

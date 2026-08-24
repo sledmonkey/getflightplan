@@ -80,9 +80,10 @@ sends the repo name and reads the answer. If the registry is unreachable or
 unconfigured, it silently allows the session to end. It sends nothing else.
 
 Some harnesses run this hook without Claude Code's retry flag. For those,
-the hook remembers each block in `~/.cache/flightplan/stop_hook_blocks.json`
-so that one nag stays one nag. The file holds only SHA-256 hashes and
-timestamps. Nothing in it leaves the machine.
+the hook remembers each delivered nag as one empty marker file in
+`~/.cache/flightplan/stop_hook_blocks/`, so that one nag stays one nag. The
+file names are SHA-256 hashes; the files hold nothing. Nothing there leaves
+the machine.
 
 ## What is stored locally
 
@@ -94,7 +95,8 @@ timestamps. Nothing in it leaves the machine.
 | `.claude/hooks/flightplan_stop_hook.py` | The stop hook | Yes |
 | `.claude/settings.json` | The hook's Stop wiring | Yes |
 | `~/.config/flightplan/env` | Your API key (`FLIGHTPLAN_API_KEY=…`), file mode 600 | No — machine-level |
-| `~/.cache/flightplan/stop_hook_blocks.json` | The stop hook's block memory: hashes and timestamps, no secrets. Removed by `uninstall --purge-key`. | No — machine-level |
+| `~/.cache/flightplan/stop_hook_blocks/` | The stop hook's block memory: one empty marker file per nag, names are SHA-256 hashes, no secrets. Removed by `uninstall --purge-key`. | No — machine-level |
 | Agent MCP config (`~/.claude.json`, `~/.codex/config.toml`) | The MCP server entry, including the key in its env | No — machine-level |
+| `~/.cursor/mcp.json` | The `flightplan` server entry, including the key in its env, file mode 600. Only this user-level file; a project `.cursor/mcp.json` is never touched. | No — machine-level |
 
 To remove all of it, see `getflightplan uninstall`.

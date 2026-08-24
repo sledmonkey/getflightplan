@@ -486,24 +486,27 @@ def test_cli_dispatches_logout(monkeypatch):
 def test_register_mcp_runs_the_promptless_registrar(monkeypatch):
     seen: dict = {}
 
-    def registrar(root, *, agent, url, source):
-        seen.update(agent=agent, url=url, source=source)
+    def registrar(root, *, agents, url, source):
+        seen.update(agents=agents, url=url, source=source)
         return True
 
     monkeypatch.setattr(install, "_register_agents", registrar)
     login.register_mcp("https://example.test")
     assert seen == {
-        "agent": "both",
+        # The login registers every agent this version knows.
+        "agents": install.AGENTS,
         "url": "https://example.test",
         "source": install.PACKAGE_SOURCE,
     }
+    # Named so a new agent cannot be added without the login picking it up.
+    assert set(seen["agents"]) == {"claude", "codex", "cursor"}
 
 
 def test_register_mcp_forwards_a_custom_source(monkeypatch):
     seen: dict = {}
     monkeypatch.setattr(
         install, "_register_agents",
-        lambda root, *, agent, url, source: seen.update(source=source) or True,
+        lambda root, *, agents, url, source: seen.update(source=source) or True,
     )
     login.register_mcp("https://example.test", source="/src/local")
     assert seen["source"] == "/src/local"

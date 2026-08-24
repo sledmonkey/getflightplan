@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-24
+
+### Added
+- `--agent cursor`. It writes the agent snippet into `AGENTS.md`, which
+  Cursor reads, and merges a `flightplan` entry into `~/.cursor/mcp.json`,
+  keeping every other server in that file. It installs no hook: a Cursor
+  session nags at session end only in a repo that also has the Claude Code
+  stop hook (`--agent claude` or `all`), which since 0.13.5 nags once under
+  Cursor.
+
+### Changed
+- `install --agent` now takes a comma list (`--agent claude,codex`) and the
+  keyword `all`, which means every agent this version knows. One name still
+  works, and `claude` is still the default.
+
+### Removed
+- `install --agent both`. Use `all` or `claude,codex`. More agents are
+  coming, so a pairwise keyword no longer says anything useful.
+
+### Fixed
+- The stop hook's block memory is now one marker file per nag, created with
+  exclusive open, in `~/.cache/flightplan/stop_hook_blocks/`. The 0.13.5
+  shared JSON file lost records when sessions wrote it at the same time, so
+  some sessions nagged again. `uninstall --purge-key` removes the directory,
+  and the old file with it.
+
 ## [0.13.5] - 2026-08-24
 
 ### Changed
@@ -282,7 +308,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/sledmonkey/getflightplan/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/sledmonkey/getflightplan/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/sledmonkey/getflightplan/compare/v0.13.2...v0.13.3

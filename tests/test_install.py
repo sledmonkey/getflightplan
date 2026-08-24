@@ -3,9 +3,12 @@ over a tmp_path repo. The last group are drift tests against THIS repo — they
 assert the README/root-CLAUDE.md/digest-command stay byte-equal to what the
 installer would write, and so pass only once the installer has been run here."""
 
+import argparse
 import json
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from flightplan import config, install
 
@@ -30,7 +33,7 @@ def _stop_commands(settings: dict) -> list[str]:
 def test_fresh_install_claude(tmp_path, monkeypatch):
     monkeypatch.delenv("FLIGHTPLAN_URL", raising=False)  # pin-less: hit the default
     _git_init(tmp_path, "https://github.com/acme/coolproject.git")
-    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
 
     assert statuses[".flightplan.toml"] == "written"
     assert statuses["CLAUDE.md"] == "written"
@@ -60,7 +63,7 @@ def test_fresh_install_claude(tmp_path, monkeypatch):
 
 def test_idempotent_rerun(tmp_path):
     _git_init(tmp_path, "https://github.com/acme/coolproject.git")
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
 
     def snapshot() -> dict:
         return {
@@ -70,7 +73,7 @@ def test_idempotent_rerun(tmp_path):
         }
 
     before = snapshot()
-    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     assert set(statuses.values()) == {"unchanged"}
     assert snapshot() == before
 
@@ -81,7 +84,7 @@ def test_heading_migration(tmp_path):
         "## Intent registry\n\nOld hand-pasted text.\n\n"
         "## Other section\n\nKeep me.\n"
     )
-    install.run(tmp_path, agent="claude", repo="myrepo", url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo="myrepo", url=None, dry_run=False)
     md = (tmp_path / "CLAUDE.md").read_text()
 
     assert "Old hand-pasted text." not in md          # old section replaced
@@ -104,7 +107,7 @@ def test_settings_merge_drops_legacy_preserves_rest(tmp_path):
         "permissions": {"allow": ["Bash(ls:*)"]},
     }, indent=2))
 
-    install.run(tmp_path, agent="claude", repo="r", url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo="r", url=None, dry_run=False)
     settings = json.loads((tmp_path / ".claude/settings.json").read_text())
     cmds = _stop_commands(settings)
     assert install.STOP_HOOK_COMMAND in cmds
@@ -112,7 +115,7 @@ def test_settings_merge_drops_legacy_preserves_rest(tmp_path):
     assert "echo unrelated" in cmds                                    # foreign kept
     assert settings["permissions"] == {"allow": ["Bash(ls:*)"]}        # rest kept
 
-    install.run(tmp_path, agent="claude", repo="r", url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo="r", url=None, dry_run=False)
     cmds2 = _stop_commands(json.loads((tmp_path / ".claude/settings.json").read_text()))
     assert cmds2.count(install.STOP_HOOK_COMMAND) == 1                 # no duplicate
 
@@ -136,7 +139,7 @@ def test_pre_rename_upgrade_migrates_pin_and_hook(tmp_path):
         "<!-- intent-registry:end -->\n"
     )
 
-    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
 
     # The pin migrated — not re-derived from the origin, not the default url —
     # and the legacy pin file is gone.
@@ -164,7 +167,7 @@ def test_invalid_settings_left_alone(tmp_path):
     (tmp_path / ".claude/settings.json").write_text("{ not json ]")
     warnings: list[str] = []
     statuses = install.run(
-        tmp_path, agent="claude", repo="r", url=None, dry_run=False, warnings=warnings,
+        tmp_path, agents=("claude",), repo="r", url=None, dry_run=False, warnings=warnings,
     )
     assert (tmp_path / ".claude/settings.json").read_text() == "{ not json ]"  # untouched
     assert ".claude/settings.json" not in statuses
@@ -175,19 +178,19 @@ def test_invalid_settings_left_alone(tmp_path):
 
 def test_repo_override_then_sticks(tmp_path):
     _git_init(tmp_path, "https://github.com/acme/coolproject.git")
-    install.run(tmp_path, agent="claude", repo="override-name", url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo="override-name", url=None, dry_run=False)
     assert 'repo = "override-name"' in (tmp_path / ".flightplan.toml").read_text()
     assert "use `override-name` (pinned" in (tmp_path / "CLAUDE.md").read_text()
 
     # Second run WITHOUT --repo: existing pin wins over derivation.
-    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     assert set(statuses.values()) == {"unchanged"}
     toml = (tmp_path / ".flightplan.toml").read_text()
     assert 'repo = "override-name"' in toml and "coolproject" not in toml
 
 
 def test_codex_writes_agents_md_only(tmp_path):
-    statuses = install.run(tmp_path, agent="codex", repo="cdx", url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("codex",), repo="cdx", url=None, dry_run=False)
     assert statuses["AGENTS.md"] == "written"
     assert "CLAUDE.md" not in statuses
     assert ".claude/commands/registry-digest.md" not in statuses
@@ -198,7 +201,7 @@ def test_codex_writes_agents_md_only(tmp_path):
 
 
 def test_dry_run_writes_nothing(tmp_path):
-    statuses = install.run(tmp_path, agent="both", repo="dry", url=None, dry_run=True)
+    statuses = install.run(tmp_path, agents=install.AGENTS, repo="dry", url=None, dry_run=True)
     assert statuses and set(statuses.values()) == {"written"}
     assert not (tmp_path / ".flightplan.toml").exists()
     assert not (tmp_path / "CLAUDE.md").exists()
@@ -207,9 +210,57 @@ def test_dry_run_writes_nothing(tmp_path):
 
 
 def test_custom_url_pinned(tmp_path):
-    install.run(tmp_path, agent="claude", repo="r", url="https://intents.example.com",
+    install.run(tmp_path, agents=("claude",), repo="r", url="https://intents.example.com",
                 dry_run=False)
     assert 'url = "https://intents.example.com"' in (tmp_path / ".flightplan.toml").read_text()
+
+
+# --- The `--agent` grammar: comma lists and `all` ---
+
+def test_parse_agents_one_name():
+    assert install.parse_agents("codex") == ("codex",)
+
+
+def test_parse_agents_comma_list():
+    assert install.parse_agents("claude,codex") == ("claude", "codex")
+
+
+def test_parse_agents_all_expands_to_every_agent():
+    assert install.parse_agents("all") == install.AGENTS
+
+
+def test_parse_agents_dedupes_and_uses_canonical_order():
+    # What the user types never changes the report order.
+    assert install.parse_agents("codex,claude,codex") == ("claude", "codex")
+    assert install.parse_agents(" codex , all ") == install.AGENTS
+
+
+def test_parse_agents_rejects_an_unknown_name():
+    with pytest.raises(argparse.ArgumentTypeError) as err:
+        install.parse_agents("emacs")
+    assert "unknown agent 'emacs'" in str(err.value)
+    assert "valid: claude, codex, cursor, all, or a comma list" in str(err.value)
+
+
+def test_parse_agents_rejects_both():
+    # `both` is gone — it is now just an unknown name.
+    with pytest.raises(argparse.ArgumentTypeError) as err:
+        install.parse_agents("both")
+    assert "unknown agent 'both'" in str(err.value)
+
+
+@pytest.mark.parametrize("value", ["", ",", "  ", " , "])
+def test_parse_agents_rejects_an_empty_value(value):
+    with pytest.raises(argparse.ArgumentTypeError) as err:
+        install.parse_agents(value)
+    assert "no agent given" in str(err.value)
+
+
+def test_cli_rejects_agent_both(capsys):
+    with pytest.raises(SystemExit) as err:
+        install.main(["--dry-run", "--agent", "both"])
+    assert err.value.code == 2
+    assert "unknown agent 'both'" in capsys.readouterr().err
 
 
 # --- The pin file: a pinned id survives regeneration ---
@@ -229,7 +280,7 @@ def test_pinned_id_survives_regeneration(tmp_path):
     _git_init(tmp_path, "https://github.com/acme/somethingelse.git")
     (tmp_path / ".flightplan.toml").write_text(_PINNED)
 
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
 
     pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
     assert pin.target == "repository"
@@ -241,10 +292,10 @@ def test_pinned_id_survives_regeneration(tmp_path):
 
 def test_pinned_id_rerun_is_idempotent(tmp_path):
     (tmp_path / ".flightplan.toml").write_text(_PINNED)
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     first = (tmp_path / ".flightplan.toml").read_text()
 
-    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     assert statuses[".flightplan.toml"] == "unchanged"
     assert (tmp_path / ".flightplan.toml").read_text() == first
 
@@ -257,7 +308,7 @@ def test_project_target_survives_too(tmp_path):
         'target = "project"\ntarget_id = "proj_5b71ee"\nname = "coolproject rewrite"\n'
         'url = "https://registry.example"\n'
     )
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
 
     text = (tmp_path / ".flightplan.toml").read_text()
     pin = config.read_pin(text)
@@ -266,14 +317,14 @@ def test_project_target_survives_too(tmp_path):
     assert pin.url == "https://registry.example"
     assert "repo = " not in text
 
-    statuses = install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    statuses = install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     assert statuses[".flightplan.toml"] == "unchanged"
 
 
 def test_repo_flag_renames_but_keeps_the_id(tmp_path):
     # `--repo` sets the readable name. The id is not the installer's to change.
     (tmp_path / ".flightplan.toml").write_text(_PINNED)
-    install.run(tmp_path, agent="claude", repo="renamed", url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo="renamed", url=None, dry_run=False)
     pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
     assert pin.name == "renamed"
     assert pin.target_id == "repo_9f3c2a"
@@ -284,7 +335,7 @@ def test_legacy_pin_keeps_the_legacy_shape(tmp_path):
     (tmp_path / ".flightplan.toml").write_text(
         'repo = "pinned-team-name"\nurl = "https://registry.example"\n'
     )
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
 
     text = (tmp_path / ".flightplan.toml").read_text()
     assert 'repo = "pinned-team-name"' in text
@@ -294,7 +345,7 @@ def test_legacy_pin_keeps_the_legacy_shape(tmp_path):
 
 def test_fresh_install_never_invents_an_id(tmp_path):
     _git_init(tmp_path, "https://github.com/acme/coolproject.git")
-    install.run(tmp_path, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(tmp_path, agents=("claude",), repo=None, url=None, dry_run=False)
     pin = config.read_pin((tmp_path / ".flightplan.toml").read_text())
     assert pin.target_id is None and pin.target is None
 
@@ -371,7 +422,7 @@ def test_legacy_name_shows_reregister_nudge(tmp_path, monkeypatch):
     )
     _offline(monkeypatch)
 
-    lines = install.verify(tmp_path, agent="claude", url=install.DEFAULT_URL)
+    lines = install.verify(tmp_path, agents=("claude",), url=install.DEFAULT_URL)
     text = "\n".join(lines)
     assert "legacy name 'intent-registry'" in text     # counts as registered, but nudges
     assert "claude mcp add flightplan" in text
@@ -492,12 +543,24 @@ def test_non_tty_still_registers(tmp_path, monkeypatch):
     assert [c[0] for c in _mcp_adds(calls)] == ["claude"]
 
 
-def test_agent_both_registers_both(tmp_path, monkeypatch):
+def test_agent_all_registers_every_agent(tmp_path, monkeypatch):
     _onboard_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(install.shutil, "which", lambda cmd: f"/bin/{cmd}")
     calls = _capture_subprocess(monkeypatch)
 
-    assert install.main(["--agent", "both", "--url", install.DEFAULT_URL]) == 0
+    assert install.main(["--agent", "all", "--url", install.DEFAULT_URL]) == 0
+    assert [c[0] for c in _mcp_adds(calls)] == ["claude", "codex"]
+
+
+def test_agent_comma_list_registers_each_one(tmp_path, monkeypatch):
+    _onboard_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(install.shutil, "which", lambda cmd: f"/bin/{cmd}")
+    calls = _capture_subprocess(monkeypatch)
+
+    assert install.main(
+        ["--agent", "codex,claude", "--url", install.DEFAULT_URL]
+    ) == 0
+    # Registration order follows AGENTS, not what the user typed.
     assert [c[0] for c in _mcp_adds(calls)] == ["claude", "codex"]
 
 
@@ -508,8 +571,14 @@ def test_published_guidance_uses_bare_uvx(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _offline(monkeypatch)
-    text = "\n".join(install.verify(tmp_path, agent="both", url=install.DEFAULT_URL))
-    text += install._claude_guidance() + install._codex_guidance()
+    text = "\n".join(
+        install.verify(tmp_path, agents=install.AGENTS, url=install.DEFAULT_URL)
+    )
+    text += (
+        install._claude_guidance()
+        + install._codex_guidance()
+        + install._cursor_guidance()
+    )
     assert "uvx getflightplan" in text
     assert "git+https" not in text
     assert "--from" not in text
@@ -523,12 +592,16 @@ def test_absent_binary_reads_skipped(tmp_path, monkeypatch):
     _offline(monkeypatch)
     monkeypatch.setattr(install.shutil, "which", lambda _cmd: None)
 
-    text = "\n".join(install.verify(tmp_path, agent="both", url=install.DEFAULT_URL))
+    text = "\n".join(
+        install.verify(tmp_path, agents=install.AGENTS, url=install.DEFAULT_URL)
+    )
     assert "claude: Claude Code is not on this machine — skipped" in text
     assert "codex: Codex is not on this machine — skipped" in text
+    assert "cursor: Cursor is not on this machine — skipped" in text
     # No promise the login cannot keep, and no loud marker.
     assert "the login does this" not in text
     assert "!!   claude" not in text and "!!   codex" not in text
+    assert "!!   cursor" not in text
 
 
 def test_repair_runs_before_the_report(tmp_path, monkeypatch, capsys):
@@ -667,7 +740,7 @@ def test_codex_stale_source_detected(tmp_path, monkeypatch, capsys):
     assert reg.status == install.STALE
     assert _OLD_SOURCE in reg.detail
 
-    text = "\n".join(install.verify(tmp_path, agent="codex", url=install.DEFAULT_URL))
+    text = "\n".join(install.verify(tmp_path, agents=("codex",), url=install.DEFAULT_URL))
     assert "registered but" in text
     assert "not found" not in text
 
@@ -712,7 +785,7 @@ def test_codex_unparseable_toml_does_not_crash(tmp_path, monkeypatch):
     assert reg.status == install.STALE          # can't read it — assume stale
     assert "unparseable" in reg.detail
     # And verify still produces its lines.
-    assert install.verify(tmp_path, agent="codex", url=install.DEFAULT_URL)
+    assert install.verify(tmp_path, agents=("codex",), url=install.DEFAULT_URL)
 
 
 def test_codex_unparseable_toml_without_our_server_is_missing(tmp_path, monkeypatch):
@@ -737,6 +810,193 @@ def test_claude_non_uvx_registration_is_stale(tmp_path, monkeypatch):
         tmp_path, install.PACKAGE_SOURCE, install.DEFAULT_URL)
     assert reg.status == install.STALE
     assert "python -m flightplan.mcp_server" in reg.detail
+
+
+# --- Cursor: the AGENTS.md snippet, plus a merge into ~/.cursor/mcp.json ---
+#
+# Cursor ships no `mcp add` command, so registration is a file edit. Detection
+# is the ~/.cursor directory, not a binary on PATH.
+
+def _cursor_home(tmp_path, monkeypatch):
+    """`_onboard_repo` plus a ~/.cursor directory — a machine with Cursor on
+    it, already logged in."""
+    home, repo = _onboard_repo(tmp_path, monkeypatch)
+    (home / ".cursor").mkdir()
+    return home, repo
+
+
+def _cursor_config(home) -> Path:
+    return home / ".cursor" / "mcp.json"
+
+
+def _cursor_json(home) -> dict:
+    return json.loads(_cursor_config(home).read_text())
+
+
+def _stale_cursor_entry(key: str) -> str:
+    """A flightplan entry that is right in every way but the credential."""
+    return json.dumps({"mcpServers": {"flightplan": {
+        "command": "uvx",
+        "args": ["getflightplan", "mcp"],
+        "env": {
+            "FLIGHTPLAN_URL": install.DEFAULT_URL,
+            "FLIGHTPLAN_API_KEY": key,
+        },
+    }}})
+
+
+def test_cursor_writes_agents_md_and_no_claude_artifacts(tmp_path):
+    statuses = install.run(
+        tmp_path, agents=("cursor",), repo="crsr", url=None, dry_run=False,
+    )
+    assert statuses["AGENTS.md"] == "written"
+    assert "CLAUDE.md" not in statuses
+    assert ".claude/commands/registry-digest.md" not in statuses
+    assert ".claude/settings.json" not in statuses
+    assert not (tmp_path / ".claude").exists()
+    assert install.render_snippet("crsr") in (tmp_path / "AGENTS.md").read_text()
+    assert (tmp_path / ".flightplan.toml").exists()
+
+
+def test_codex_and_cursor_share_one_snippet_block(tmp_path):
+    install.run(
+        tmp_path, agents=("codex", "cursor"), repo="r", url=None, dry_run=False,
+    )
+    once = (tmp_path / "AGENTS.md").read_text()
+    assert once.count(install.END_MARKER) == 1
+    # And a later cursor-only run does not add a second block.
+    install.run(tmp_path, agents=("cursor",), repo="r", url=None, dry_run=False)
+    assert (tmp_path / "AGENTS.md").read_text() == once
+
+
+def test_cursor_registration_creates_mcp_json(tmp_path, monkeypatch):
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    entry = _cursor_json(home)["mcpServers"]["flightplan"]
+    assert entry["command"] == "uvx"
+    assert entry["args"] == ["getflightplan", "mcp"]
+    assert entry["env"] == {
+        "FLIGHTPLAN_URL": install.DEFAULT_URL,
+        "FLIGHTPLAN_API_KEY": _FAKE_KEY,
+    }
+    # The file holds a credential, so it is not world-readable.
+    assert _cursor_config(home).stat().st_mode & 0o777 == 0o600
+
+
+def test_cursor_skipped_without_the_directory(tmp_path, monkeypatch, capsys):
+    home, _repo = _onboard_repo(tmp_path, monkeypatch)  # no ~/.cursor
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    out = capsys.readouterr().out
+    assert "..   cursor: Cursor is not on this machine — skipped" in out
+    assert "!!   cursor" not in out
+    # ~/.cursor is read and written inside, never created.
+    assert not (home / ".cursor").exists()
+
+
+def test_cursor_merge_preserves_other_servers_and_keys(tmp_path, monkeypatch):
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+    _cursor_config(home).write_text(json.dumps({
+        "mcpServers": {"other": {"command": "node", "args": ["server.js"]}},
+        "someOtherSetting": {"keep": True},
+    }))
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    data = _cursor_json(home)
+    assert data["mcpServers"]["other"] == {"command": "node", "args": ["server.js"]}
+    assert data["someOtherSetting"] == {"keep": True}
+    assert "flightplan" in data["mcpServers"]
+
+
+def test_cursor_non_json_file_is_left_alone(tmp_path, monkeypatch, capsys):
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+    broken = "{ this is not json"
+    _cursor_config(home).write_text(broken)
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    assert _cursor_config(home).read_text() == broken  # byte for byte
+    out = capsys.readouterr().out
+    # One line owns the story: the register attempt is skipped, and only the
+    # verify line names the file and the fix.
+    assert "!!   cursor: ~/.cursor/mcp.json is not a JSON object" in out
+    assert "could not write" not in out
+
+
+def test_cursor_stale_credential_is_replaced(tmp_path, monkeypatch):
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+    _cursor_config(home).write_text(_stale_cursor_entry("fp-old-rotated-out"))
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    env = _cursor_json(home)["mcpServers"]["flightplan"]["env"]
+    assert env["FLIGHTPLAN_API_KEY"] == _FAKE_KEY
+
+
+def test_cursor_legacy_named_entry_is_migrated(tmp_path, monkeypatch):
+    # A hand-copied entry under the old server name: the merge replaces it
+    # with the current name, the same migration the claude/codex paths do.
+    # Left in place, Cursor would start two servers.
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+    _cursor_config(home).write_text(json.dumps({
+        "mcpServers": {
+            install.LEGACY_SERVER_NAME: {"command": "uvx", "args": ["x"]},
+            "other": {"command": "node", "args": ["server.js"]},
+        },
+    }))
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    servers = _cursor_json(home)["mcpServers"]
+    assert install.LEGACY_SERVER_NAME not in servers
+    assert "flightplan" in servers
+    assert servers["other"] == {"command": "node", "args": ["server.js"]}
+
+
+def test_cursor_credential_never_printed(tmp_path, monkeypatch, capsys):
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+    old = "fp-old-rotated-out"
+    _cursor_config(home).write_text(_stale_cursor_entry(old))
+
+    assert install.main(["--agent", "cursor", "--url", install.DEFAULT_URL]) == 0
+
+    out = capsys.readouterr().out
+    assert _FAKE_KEY not in out   # the new one
+    assert old not in out         # and the one it replaced
+
+
+def test_cursor_dry_run_writes_nothing(tmp_path, monkeypatch):
+    home, _repo = _cursor_home(tmp_path, monkeypatch)
+
+    assert install.main(
+        ["--dry-run", "--agent", "cursor", "--url", install.DEFAULT_URL]
+    ) == 0
+
+    assert not _cursor_config(home).exists()
+
+
+def test_cursor_pending_without_a_credential(tmp_path, monkeypatch, capsys):
+    # Mid-onboarding reads calm, like the other agents: no loud marker.
+    home = tmp_path / "home"
+    (home / ".cursor").mkdir(parents=True)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("FLIGHTPLAN_API_KEY", raising=False)
+    monkeypatch.delenv("FLIGHTPLAN_URL", raising=False)
+    _offline(monkeypatch)
+
+    assert install.main(["--agent", "cursor"]) == 0
+
+    out = capsys.readouterr().out
+    assert "..   cursor: not connected yet — the login does this" in out
+    assert "!!   cursor" not in out
 
 
 # --- Argv and url validation (a name-only or source-only check is too loose) ---
