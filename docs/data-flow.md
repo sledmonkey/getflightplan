@@ -96,5 +96,6 @@ timestamps. Nothing in it leaves the machine.
 | `~/.config/flightplan/env` | Your API key (`FLIGHTPLAN_API_KEY=…`), file mode 600 | No — machine-level |
 | `~/.cache/flightplan/stop_hook_blocks.json` | The stop hook's block memory: hashes and timestamps, no secrets. Removed by `uninstall --purge-key`. | No — machine-level |
 | Agent MCP config (`~/.claude.json`, `~/.codex/config.toml`) | The MCP server entry, including the key in its env | No — machine-level |
+| `~/.cursor/mcp.json` | The `flightplan` server entry, including the key in its env, file mode 600. Only this user-level file; a project `.cursor/mcp.json` is never touched. | No — machine-level |
 
 To remove all of it, see `getflightplan uninstall`.

@@ -882,7 +882,7 @@ def test_a_registered_name_survives_an_installer_rewrite(tmp_path):
         root, target="repository", target_id="repo_9f3c", name=name,
     )
 
-    install.run(root, agent="claude", repo=None, url=None, dry_run=False)
+    install.run(root, agents=("claude",), repo=None, url=None, dry_run=False)
 
     text = (root / ".flightplan.toml").read_text(encoding="utf-8")
     assert tomllib.loads(text)["name"] == name

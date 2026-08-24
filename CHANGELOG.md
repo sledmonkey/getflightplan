@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `--agent cursor`. It writes the agent snippet into `AGENTS.md`, which
+  Cursor reads, and merges a `flightplan` entry into `~/.cursor/mcp.json`,
+  keeping every other server in that file. It installs no hook: a Cursor
+  session nags at session end only in a repo that also has the Claude Code
+  stop hook (`--agent claude` or `all`), which since 0.13.5 nags once under
+  Cursor.
+
+### Changed
+- `install --agent` now takes a comma list (`--agent claude,codex`) and the
+  keyword `all`, which means every agent this version knows. One name still
+  works, and `claude` is still the default.
+
+### Removed
+- `install --agent both`. Use `all` or `claude,codex`. More agents are
+  coming, so a pairwise keyword no longer says anything useful.
+
 ## [0.13.5] - 2026-08-24
 
 ### Changed

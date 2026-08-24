@@ -9,9 +9,10 @@ Reverses what `getflightplan install` wrote in this repo:
   - the stop hook's `Stop` wiring in `.claude/settings.json` (everything else
     in that file is preserved).
 
-MCP registrations (`claude mcp` / `codex mcp`) are machine-level, not
-per-repo — removing one affects every repo on this machine — so they are only
-removed on explicit confirmation. The saved API key
+MCP registrations (`claude mcp` / `codex mcp`, and the flightplan entry in
+`~/.cursor/mcp.json`) are machine-level, not per-repo — removing one affects
+every repo on this machine — so they are only removed on explicit
+confirmation. The saved API key
 (`~/.config/flightplan/env`) is machine-level too and is kept unless
 `--purge-key` is passed; the stop hook's block-memory cache
 (`~/.cache/flightplan/stop_hook_blocks.json`, hashes and timestamps only)
@@ -35,12 +36,15 @@ from .install import (
     LEGACY_HOOK_REL,
     LEGACY_HOOK_SUFFIXES,
     LEGACY_PIN_REL,
+    LEGACY_SERVER_NAME,
     STOP_HOOK_COMMAND,
     STOP_HOOK_REL,
     _LEGACY_BEGIN_PREFIX,
     _LEGACY_END_PREFIX,
+    _cursor_config,
     _key_config_file,
     _repo_root,
+    _write_atomic,
 )
 
 DIGEST_REL = ".claude/commands/registry-digest.md"
@@ -259,18 +263,74 @@ def run(
 # MCP deregistration (interactive, machine-level)
 # --------------------------------------------------------------------------- #
 
+def _asked(name: str) -> bool:
+    """The one confirmation question. Default is no."""
+    answer = input(
+        f"Remove the flightplan MCP registration from {name}? This "
+        "affects every repo on this machine. [y/N] "
+    ).strip().lower()
+    return answer in ("y", "yes")
+
+
+def _remove_cursor_entry() -> None:
+    """Drop `mcpServers.flightplan` from ~/.cursor/mcp.json. Cursor has no
+    `mcp remove` command, so the file is edited here: every other server and
+    every other key stays, and the rewrite is atomic. A file that is not a
+    JSON object is left alone — we cannot find our entry in it, and we will
+    not destroy it."""
+    path = _cursor_config()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        print("  !!   ~/.cursor/mcp.json is not a JSON object — left unchanged")
+        return
+
+    servers = data.get("mcpServers")
+    # A leftover legacy-named entry is ours too — one consent covers both.
+    ours = [
+        name for name in ("flightplan", LEGACY_SERVER_NAME)
+        if isinstance(servers, dict) and name in servers
+    ]
+    if not ours:
+        print("  ..   cursor: no flightplan entry to remove")
+        return
+
+    for name in ours:
+        del servers[name]
+    data["mcpServers"] = servers
+    try:
+        # Mode 600 as written: the other entries may carry credentials too.
+        _write_atomic(path, json.dumps(data, indent=2) + "\n", 0o600)
+    except OSError:
+        print("  !!   could not write ~/.cursor/mcp.json — remove the "
+              "flightplan entry by hand")
+        return
+    print("  removed  flightplan MCP registration (cursor)")
+
+
+def _cursor_servers() -> dict | None:
+    """The `mcpServers` map from ~/.cursor/mcp.json. None means the file is
+    absent, unreadable, or not a JSON object — nothing we may edit."""
+    try:
+        data = json.loads(_cursor_config().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    servers = data.get("mcpServers")
+    return servers if isinstance(servers, dict) else {}
+
+
 def _offer_mcp_removal() -> None:
-    """Offer to remove the `flightplan` MCP registration per agent CLI.
+    """Offer to remove the `flightplan` MCP registration per agent.
     Default is no: the registration is machine-level, so removing it breaks
     FlightPlan in every other repo on this machine too."""
     for name in ("claude", "codex"):
         if not shutil.which(name):
             continue
-        answer = input(
-            f"Remove the flightplan MCP registration from {name}? This "
-            "affects every repo on this machine. [y/N] "
-        ).strip().lower()
-        if answer in ("y", "yes"):
+        if _asked(name):
             try:
                 proc = subprocess.run(
                     [name, "mcp", "remove", "flightplan"],
@@ -284,6 +344,17 @@ def _offer_mcp_removal() -> None:
                 else f"  !!   {name} mcp remove failed — run "
                 f"`{name} mcp remove flightplan` by hand"
             )
+
+    # Cursor has no CLI, so the offer is gated on the entry being there.
+    if not _cursor_config().exists():
+        return
+    servers = _cursor_servers()
+    if servers is None:
+        print("  !!   ~/.cursor/mcp.json is not a JSON object — left unchanged")
+    elif any(
+        name in servers for name in ("flightplan", LEGACY_SERVER_NAME)
+    ) and _asked("cursor"):
+        _remove_cursor_entry()
 
 
 # --------------------------------------------------------------------------- #
@@ -333,7 +404,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "  →    MCP registrations are machine-level and were left alone; "
             "remove with `claude mcp remove flightplan` / "
-            "`codex mcp remove flightplan` if this was the last repo using "
+            "`codex mcp remove flightplan`, and drop the flightplan entry "
+            "from ~/.cursor/mcp.json, if this was the last repo using "
             "FlightPlan."
         )
 
