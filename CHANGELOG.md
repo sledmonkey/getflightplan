@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- The MCP server no longer requires `FLIGHTPLAN_URL`. It defaults to the
+  hosted service, so a directly-launched server needs only
+  `FLIGHTPLAN_API_KEY`. The README documents the exact server command,
+  `uvx getflightplan mcp` — a bare `getflightplan` prints help and exits.
+
 ## [0.13.4] - 2026-08-18
 
 ### Added

@@ -110,7 +110,11 @@ Landing can be repeated safely and never rewrites the completed record.
 
 ## Configuration
 
-- `FLIGHTPLAN_URL` — `https://api.getflightplan.com`
+The MCP server command is `uvx getflightplan mcp` — the `mcp` subcommand is
+required. A bare `getflightplan` prints help and exits, so a registration or
+directory build spec without `mcp` fails before the first MCP message.
+
+- `FLIGHTPLAN_URL` — optional; defaults to `https://api.getflightplan.com`
 - `FLIGHTPLAN_API_KEY` — your key (the MCP server's env; the stop hook also
   reads `~/.config/flightplan/env`).
 - `.flightplan.toml` — the per-repo pin: a `repo` name and `url`, or a
