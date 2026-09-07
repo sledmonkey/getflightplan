@@ -416,7 +416,12 @@ async def _fan_out(
         "already in your tree before redoing it. The response also includes "
         "`context` — recently-completed work relevant to THIS task: read those "
         "outcomes before you start, the surprises and dead ends in them are "
-        "load-bearing (a rejected approach you might retry, a gotcha you will hit)."
+        "load-bearing (a rejected approach you might retry, a gotcha you will hit). "
+        "Overlap entries carry `summary_excerpt`; context entries carry "
+        "`summary_excerpt` and `outcome_excerpt`. `overlaps_omitted` counts what "
+        "the server cut per alert level — a "
+        "non-zero `warn` there means more warnings exist than are shown. Call "
+        "`get_intent(id)` for any full record."
     )
 )
 async def post_intent(
@@ -481,7 +486,8 @@ async def post_intent(
         "collision check, omit `q`. `q` matches per-word (all words must appear, "
         "any order). Each returned intent carries an alert_level when `overlaps` is "
         "given: warn = surface loudly to your user; fyi = quiet mention; nudge = "
-        "possible duplicate spike, suggest comparing notes."
+        "possible duplicate spike, suggest comparing notes. Rows carry "
+        "`outcome_excerpt` by default; pass `detail=\"full\"` for whole outcomes."
     )
 )
 async def list_intents(
@@ -525,6 +531,17 @@ async def list_intents(
             )
         ),
     ] = "all",
+    detail: Annotated[
+        Literal["compact", "full"],
+        Field(
+            description=(
+                "How much of each row comes back: compact (default) = an "
+                "`outcome_excerpt` per row, enough to scan; full = whole rows "
+                "with full outcomes — use it for a digest, or whenever you will "
+                "actually read the outcomes."
+            )
+        ),
+    ] = "compact",
 ) -> dict:
     # Reads are not routed like posts. `repo` is passed through exactly as the
     # agent asked — naming another repository is a legitimate history query.
@@ -575,11 +592,32 @@ async def list_intents(
     # too, so omitting it keeps the wire clean and avoids surprises on older servers.
     if match == "any":
         params["match"] = match
+    # Same rule as `match`: "compact" is the server default, so only "full" goes
+    # on the wire. _child_query copies it, so a fan-out stays consistent.
+    if detail == "full":
+        params["detail"] = detail
     # The fan-out applies to a project pin, to a query with globs, and to a
     # query that asks about this workspace.
     if ws is not None and overlaps and (not repo or repo == pin.name):
         return await _fan_out(ws, params, overlaps, limit)
     return await _call("GET", "/intents", params=params)
+
+
+@mcp.tool(
+    description=(
+        "Fetch one intent's full record — the whole summary and outcome — by id "
+        "or by a unique 8-char prefix. Overlap, context and list entries carry "
+        "excerpts only, so call this when the excerpt is not enough: an overlap "
+        "you have to describe to your user, or a context outcome you want to read "
+        "in full before starting. Read-only; it records nothing."
+    )
+)
+async def get_intent(
+    id: Annotated[str, Field(description="The intent id, or a unique 8-char prefix of one (as shown in overlaps and the digest).")],
+) -> dict:
+    # No pin routing and no paths: the id addresses the record directly, and the
+    # server decides what the caller may read.
+    return await _call("GET", f"/intents/{id}")
 
 
 @mcp.tool(
@@ -591,7 +629,9 @@ async def list_intents(
         "without one). Calling with just the id ALSO returns fresh `overlaps` — "
         "the cheap mid-session collision re-check, since a post-time check goes "
         "stale over a long session. Treat a `warn` here exactly like a warn at "
-        "post time: tell your user before proceeding. Never use this to finish "
+        "post time: tell your user before proceeding. Overlaps carry excerpts, "
+        "and `overlaps_omitted` counts any the server cut per level — use "
+        "`get_intent(id)` for a full record. Never use this to finish "
         "work — call complete_intent for that."
     )
 )
@@ -642,7 +682,10 @@ async def update_intent(
         "over the work, committed or not); `commits` = SHAs created for this "
         "work; `uncommitted` = true if ANY of the work is not yet committed "
         "(untracked/unstaged/staged-only) — this flag is what lets other agents' "
-        "collision checks warn loudly instead of quietly. Omit anything unknown."
+        "collision checks warn loudly instead of quietly. Omit anything unknown. "
+        "Any overlaps that come back carry excerpts, and `overlaps_omitted` "
+        "counts the ones the server cut per level — use `get_intent(id)` for a "
+        "full record."
     )
 )
 async def complete_intent(

@@ -21,11 +21,12 @@ Default: this repo, last 14 days, everything.
 
 Use `list_intents` with repo = the name pinned in `.flightplan.toml` at
 the repo root (fallback: basename of the git origin remote, else the repo root
-directory name). Fetch `status="done,abandoned"` for the narrative, and
-`status="active"` for the closing "in flight" section. For topic queries that
-come back thin, loosen before concluding nothing happened: retry with
-`match="any"`, then with fewer words. Read the full outcomes — they are the
-source, not the summaries alone.
+directory name). Pass `detail="full"` — a digest is built from whole outcomes,
+and the default rows carry excerpts only. Fetch `status="done,abandoned"` for
+the narrative, and `status="active"` for the closing "in flight" section. For
+topic queries that come back thin, loosen before concluding nothing happened:
+retry with `match="any"`, then with fewer words. Read the full outcomes — they
+are the source, not the summaries alone.
 
 ## Synthesis rules
 

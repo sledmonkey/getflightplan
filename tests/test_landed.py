@@ -74,7 +74,7 @@ def test_an_unreachable_registry_is_advisory(monkeypatch, call):
 def test_the_tool_is_registered_with_the_others(call):
     names = sorted(t.name for t in call(mcp_server.mcp.list_tools()))
     assert names == [
-        "complete_intent", "list_intents", "mark_intent_landed",
+        "complete_intent", "get_intent", "list_intents", "mark_intent_landed",
         "post_intent", "update_intent",
     ]
 
