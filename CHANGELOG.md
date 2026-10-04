@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-03
+
+### Changed
+- The `list_intents` tool descriptions say "advisory" where they said "judge".
+  The registry calls this assessment an advisory now, and reports it as
+  `assessed_by: "advisory"`, so the words an agent reads and the words it
+  receives match again.
+
 ## [0.15.0] - 2026-09-06
 
 ### Added
@@ -322,7 +330,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/sledmonkey/getflightplan/compare/v0.15.0...v0.15.2
 [0.15.0]: https://github.com/sledmonkey/getflightplan/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/sledmonkey/getflightplan/compare/v0.13.4...v0.13.5
