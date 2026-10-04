@@ -475,7 +475,7 @@ async def post_intent(
     description=(
         "Query in-flight and recent work across the team. Three distinct uses — "
         "pick exactly one: (1) pre-planning semantic check — pass `summary` (and "
-        "optionally `overlaps` globs) to get judge-assessed semantic overlap before "
+        "optionally `overlaps` globs) to get an advisory semantic overlap before "
         "you post_intent; this is the strong collision check; (2) fast glob "
         "collision check — pass `overlaps` alone (no `summary`, no `q`) for "
         "deterministic prefix matching; (3) context search — pass `q` and `since` "
@@ -502,7 +502,7 @@ async def list_intents(
     ] = None,
     summary: Annotated[
         str | None,
-        Field(description="Your planned task, one paragraph. Provide it to get semantic (judge) collision assessment instead of glob-prefix matching — use for a pre-planning check before you're ready to post_intent."),
+        Field(description="Your planned task, one paragraph. Provide it to get an advisory semantic collision assessment instead of glob-prefix matching — use for a pre-planning check before you're ready to post_intent."),
     ] = None,
     q: Annotated[str | None, Field(description="Plain-text search over summaries and outcomes.")] = None,
     since: Annotated[str | None, Field(description="ISO-8601 timestamp or shorthand like '24h', '7d'.")] = None,
