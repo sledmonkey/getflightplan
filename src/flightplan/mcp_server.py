@@ -57,7 +57,7 @@ ALERT_RANK = {"warn": 0, "nudge": 1, "fyi": 2}
 mcp = FastMCP(
     "flightplan",
     instructions=(
-        "Team intent registry. Before starting any non-trivial coding task, call "
+        "Team intent registry. Before starting any non-trivial task, call "
         "post_intent; when the work finishes or is abandoned, call complete_intent "
         "with an outcome paragraph. Collision checks go stale over a long session: "
         "before editing a shared doc or artifact you did not create this session, "
@@ -400,7 +400,7 @@ async def _fan_out(
 @mcp.tool(
     description=(
         "Register what you are about to work on so other developers' agents can "
-        "avoid collisions. Call this before starting any non-trivial coding task "
+        "avoid collisions. Call this before starting any non-trivial task "
         "(anything touching more than a trivial fix). Infer `kind`: `build` for "
         "work meant to land, `explore`/`spike` for throwaway investigation, "
         "`decision` for a resolved decision worth recording (post it the moment a "

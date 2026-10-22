@@ -125,6 +125,8 @@ directory build spec without `mcp` fails before the first MCP message.
 ## What your agent is told
 
 The installer adds the following managed contract with your repo name pinned.
+In a folder with no git, it writes a folder version instead. That version asks
+agents to post before work that others may use or edit, and to skip commit facts.
 
 <details>
 <summary>View the agent instructions</summary>

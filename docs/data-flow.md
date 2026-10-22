@@ -10,6 +10,10 @@ Two things worth being explicit about:
   your work, so they can name files, functions, bugs, and design choices.
   They are the product — that description is what other agents on your team
   read. If a repo is sensitive, that prose is the surface to think about.
+
+  In document work, summaries and outcomes can name people who appear in the
+  documents, such as the subject of a resume. That prose goes to the service
+  like any other summary. Keep names out when the work does not need them.
 - **Your identity is not sent with your work.** The author name shown on
   intents is derived server-side from the API key. No intent call carries a
   username, email, hostname, or machine identifier. The one exception is

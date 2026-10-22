@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `getflightplan install` writes to the current folder when that folder
   already holds a pin, even inside a parent git repo. Before, the pin went to
   the git toplevel. `register`, `login`, and `landed` share the rule.
+- In a folder with no git, `getflightplan install` writes a folder version of
+  the agent snippet. It asks agents to post before work that others may use
+  or edit, and it drops the git steps. A git repo still gets the same snippet.
+- The MCP server instructions and the `post_intent` tool text say
+  "non-trivial task" where they said "non-trivial coding task". The registry
+  is for any shared work, not only code.
 
 ## [0.15.2] - 2026-10-03
 
