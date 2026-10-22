@@ -84,3 +84,27 @@ def test_every_query_of_a_fan_out_carries_detail(tmp_path, monkeypatch, registry
     queries = _queries(registry)
     assert len(queries) == 2
     assert all(q["detail"] == "full" for q in queries)
+
+
+# --- session header ----------------------------------------------------------
+# Every MCP server request carries the process session id, so the service can
+# keep a reader's own work out when it records a sighting (decision b555f228).
+
+def test_list_intents_sends_the_session_header(tmp_path, monkeypatch, registry, call):
+    monkeypatch.chdir(tmp_path)
+    registry.response = {"intents": []}
+    call(mcp_server.list_intents())
+    assert registry.sessions and set(registry.sessions) == {mcp_server.SESSION}
+
+
+def test_get_intent_sends_the_session_header(tmp_path, monkeypatch, registry, call):
+    monkeypatch.chdir(tmp_path)
+    call(mcp_server.get_intent(id="3f1a9c2b"))
+    assert registry.sessions == [mcp_server.SESSION]
+
+
+def test_post_intent_sends_the_session_header_and_body(tmp_path, monkeypatch, registry, call):
+    monkeypatch.chdir(tmp_path)
+    call(mcp_server.post_intent(repo="r", summary="s", touches=["src/**"]))
+    assert registry.sessions == [mcp_server.SESSION]
+    assert registry.body["session"] == mcp_server.SESSION

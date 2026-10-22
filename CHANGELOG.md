@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In a folder with no git, `getflightplan install` writes a folder version of
   the agent snippet. It asks agents to post before work that others may use
   or edit, and it drops the git steps. A git repo still gets the same snippet.
+- Every request from the MCP server now sends its session id in the
+  `X-FlightPlan-Session` header, not only posts. The service uses it to keep
+  your own work out when it records that another session found work in
+  progress.
 - The MCP server instructions and the `post_intent` tool text say
   "non-trivial task" where they said "non-trivial coding task". The registry
   is for any shared work, not only code.

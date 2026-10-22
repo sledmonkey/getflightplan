@@ -34,6 +34,8 @@ class StubRegistry:
         self.paths: list[str] = []
         self.bodies: list[dict] = []
         self.auth: list[str] = []
+        # The X-FlightPlan-Session header of each request, "" when absent.
+        self.sessions: list[str] = []
         self.response: dict = {"id": "3f1a", "status": "active"}
         # Set an int (or a function of the path) to answer with a 4xx.
         self.status: int = 200
@@ -64,6 +66,7 @@ def _handler_for(stub: StubRegistry):
         def _with_body(self) -> None:
             stub.paths.append(self.path)
             stub.auth.append(self.headers.get("Authorization") or "")
+            stub.sessions.append(self.headers.get("X-FlightPlan-Session") or "")
             length = int(self.headers.get("Content-Length") or 0)
             if length:
                 stub.bodies.append(json.loads(self.rfile.read(length)))
@@ -75,6 +78,7 @@ def _handler_for(stub: StubRegistry):
         def do_GET(self) -> None:
             stub.paths.append(self.path)
             stub.auth.append(self.headers.get("Authorization") or "")
+            stub.sessions.append(self.headers.get("X-FlightPlan-Session") or "")
             self._reply()
 
         def log_message(self, *args) -> None:  # keep test output quiet

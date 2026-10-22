@@ -56,6 +56,15 @@ the value is empty or the directory does not exist, the client ignores it.
 The value of `FLIGHTPLAN_ROOT` is never sent to the service. Paths are still
 sent relative to the repository or workspace, as described above.
 
+## The session id
+
+Every request the MCP server makes carries a session id in the
+`X-FlightPlan-Session` header. It is a random 12-character id, made when the
+server starts, and it is the same id already sent with each post. It says
+nothing about you or your machine. The service uses it to keep your own work
+out when it records that another session found work in progress. The stop
+hook and the CLI commands do not send it.
+
 ## Logging in
 
 `getflightplan login` sends one value about your machine: its hostname, as the

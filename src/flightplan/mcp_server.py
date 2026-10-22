@@ -80,7 +80,11 @@ def _client() -> httpx.AsyncClient:
         )
     return httpx.AsyncClient(
         base_url=url.rstrip("/"),
-        headers={"Authorization": f"Bearer {key}"},
+        headers={
+            "Authorization": f"Bearer {key}",
+            # Lets the service tell a reader's own work from others' (b555f228).
+            "X-FlightPlan-Session": SESSION,
+        },
         # The post path runs the judge synchronously, worst case two model calls
         # (primary + fallback) at ~8s each before it degrades to globs — so 10s
         # would time out the client before the server's own budget elapses.
