@@ -1251,6 +1251,12 @@ def _register_agents(
 # --------------------------------------------------------------------------- #
 
 def _repo_root() -> Path:
+    """Where install writes. A pin already in the cwd wins: a plain folder
+    of documents inside some parent git repo keeps its own pin, and it is
+    never written into the parent. Else the git toplevel, else the cwd."""
+    cwd = Path.cwd()
+    if (cwd / config.PIN_FILENAME).exists() or (cwd / LEGACY_PIN_REL).exists():
+        return cwd
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],

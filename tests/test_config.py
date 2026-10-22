@@ -72,6 +72,60 @@ def test_find_pin_walks_up_from_a_nested_dir(tmp_path, monkeypatch):
     assert config.find_pin().target_id == "repo_9f3c2a"
 
 
+# --- FLIGHTPLAN_ROOT: a stand-in for the cwd -------------------------------
+# Some hosts start the MCP server from a directory that is not the user's
+# folder. FLIGHTPLAN_ROOT names the folder, so the pin search starts there.
+
+def test_flightplan_root_moves_the_pin_search(tmp_path, monkeypatch):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / config.PIN_FILENAME).write_text(REPOSITORY)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert config.find_pin_file() is None
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", str(folder))
+    assert config.find_pin_file() == (folder / config.PIN_FILENAME).resolve()
+    assert config.find_pin().target_id == "repo_9f3c2a"
+
+
+@pytest.mark.parametrize("value", ["", "   ", "does/not/exist"])
+def test_a_flightplan_root_that_is_not_a_directory_is_ignored(value, tmp_path, monkeypatch):
+    # Advisory, never blocking: a bad value falls back to the cwd, no error.
+    (tmp_path / config.PIN_FILENAME).write_text(REPOSITORY)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", value)
+    assert config.anchor_dir() == tmp_path
+    assert config.find_pin().target_id == "repo_9f3c2a"
+
+
+def test_a_flightplan_root_that_is_a_file_is_ignored(tmp_path, monkeypatch):
+    (tmp_path / "a-file").write_text("x\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", str(tmp_path / "a-file"))
+    assert config.anchor_dir() == tmp_path
+
+
+def test_flightplan_root_expands_the_home_directory(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "docs").mkdir(parents=True)
+    (home / "docs" / config.PIN_FILENAME).write_text(REPOSITORY)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", "~/docs")
+    assert config.anchor_dir() == (home / "docs").resolve()
+    assert config.find_pin().target_id == "repo_9f3c2a"
+
+
+def test_a_relative_flightplan_root_resolves_against_the_cwd(tmp_path, monkeypatch):
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "b" / config.PIN_FILENAME).write_text(REPOSITORY)
+    monkeypatch.chdir(tmp_path / "a")
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", "b")
+    assert config.anchor_dir() == (tmp_path / "a" / "b").resolve()
+    assert config.find_pin().target_id == "repo_9f3c2a"
+
+
 # --- what the pin puts on the wire -----------------------------------------
 
 def _post(call, registry, cwd, **kwargs) -> dict:

@@ -677,12 +677,14 @@ async def update_intent(
         "system produces: write one paragraph covering what actually changed, "
         "anything surprising, approaches tried and rejected, and anything "
         "deliberately left in place. "
-        "Gather git facts as exhaust — you already have them at completion time: "
+        "Gather git facts you already have at completion time: "
         "`files` = repo-relative paths actually changed (`git diff --name-only` "
         "over the work, committed or not); `commits` = SHAs created for this "
         "work; `uncommitted` = true if ANY of the work is not yet committed "
-        "(untracked/unstaged/staged-only) — this flag is what lets other agents' "
-        "collision checks warn loudly instead of quietly. Omit anything unknown. "
+        "(untracked/unstaged/staged-only), false if all of it is. True makes "
+        "other agents' collision checks warn loudly. Outside git, omit "
+        "`uncommitted` and `commits` (there is no commit to wait for), but still "
+        "send `files`. Omit anything unknown. "
         "Any overlaps that come back carry excerpts, and `overlaps_omitted` "
         "counts the ones the server cut per level — use `get_intent(id)` for a "
         "full record."
@@ -705,7 +707,7 @@ async def complete_intent(
     ] = None,
     uncommitted: Annotated[
         bool | None,
-        Field(description="True if ANY of the work is not yet committed (untracked/unstaged/staged-only). This flag escalates collision warnings for other agents. False = all committed. Omit if unknown."),
+        Field(description="True if ANY of the work is not yet committed (untracked/unstaged/staged-only). This flag escalates collision warnings for other agents. False = all committed. Outside git, omit it: there is no commit to wait for. Omit if unknown."),
     ] = None,
 ) -> dict:
     _, ws = _binding()

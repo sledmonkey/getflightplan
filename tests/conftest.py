@@ -15,6 +15,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_flightplan_root(monkeypatch):
+    """Keep the shell's FLIGHTPLAN_ROOT out of every test. A test that wants
+    the variable sets it itself."""
+    monkeypatch.delenv("FLIGHTPLAN_ROOT", raising=False)
+
+
 class StubRegistry:
     """A one-endpoint registry. Set `response` to control what comes back.
 

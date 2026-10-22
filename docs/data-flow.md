@@ -39,6 +39,19 @@ same rule measures from the workspace directory instead, so paths are sent
 relative to it and carry the child repository's directory name. Values
 resolving outside the workspace are rejected the same way.
 
+### Where the client looks for the pin
+
+The client finds `.flightplan.toml` by looking in the current directory, then
+in each parent. Some hosts start the client in a directory that is not your
+folder, so it never finds the pin. Set `FLIGHTPLAN_ROOT` to fix this. It is a
+directory on this machine, and the client uses it in place of the current
+directory: the pin search starts there, and relative paths resolve from there.
+`~` expands, and a relative value resolves against the current directory. If
+the value is empty or the directory does not exist, the client ignores it.
+
+The value of `FLIGHTPLAN_ROOT` is never sent to the service. Paths are still
+sent relative to the repository or workspace, as described above.
+
 ## Logging in
 
 `getflightplan login` sends one value about your machine: its hostname, as the
@@ -78,6 +91,9 @@ At session end, the hook installed at `.claude/hooks/flightplan_stop_hook.py`
 makes one read-only request: "are there active intents in this repo?" It
 sends the repo name and reads the answer. If the registry is unreachable or
 unconfigured, it silently allows the session to end. It sends nothing else.
+
+The hook finds the pin the same way the client does, so it also reads
+`FLIGHTPLAN_ROOT`. The value stays on this machine.
 
 Some harnesses run this hook without Claude Code's retry flag. For those,
 the hook remembers each delivered nag as one empty marker file in

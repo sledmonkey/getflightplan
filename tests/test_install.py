@@ -1399,3 +1399,60 @@ def test_local_registration_is_replaced_in_local_scope(tmp_path, monkeypatch):
     assert replacement[:6] == [
         "claude", "mcp", "add", "flightplan", "--scope", "local",
     ]
+
+
+# --- where install writes: _repo_root ---------------------------------------
+# `git init` is not used here: the git toplevel is simulated by stubbing the
+# subprocess call, so these run where git cannot.
+
+def _fake_git(monkeypatch, toplevel: Path | None):
+    """Stub install's subprocess.run: `git rev-parse --show-toplevel` answers
+    `toplevel` (or fails when None); every other git call fails, as outside a
+    repository."""
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"] and toplevel:
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{toplevel}\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="not a git repository")
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
+
+
+def test_repo_root_is_the_git_toplevel_without_a_pin_here(tmp_path, monkeypatch):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    _fake_git(monkeypatch, tmp_path)
+    assert install._repo_root() == tmp_path
+
+
+@pytest.mark.parametrize("pin_name", [config.PIN_FILENAME, install.LEGACY_PIN_REL])
+def test_repo_root_prefers_a_pin_in_the_cwd_over_the_git_toplevel(
+    pin_name, tmp_path, monkeypatch,
+):
+    # A plain folder inside some parent git repo keeps its own pin. It is
+    # never written into the parent.
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / pin_name).write_text('repo = "docs"\n')
+    monkeypatch.chdir(folder)
+    _fake_git(monkeypatch, tmp_path)
+    assert install._repo_root() == folder
+
+
+def test_install_without_git_or_a_pin_names_the_folder(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    folder = tmp_path / "my-documents"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("FLIGHTPLAN_API_KEY", raising=False)
+    monkeypatch.delenv("FLIGHTPLAN_URL", raising=False)
+    _offline(monkeypatch)
+    _fake_git(monkeypatch, None)
+    monkeypatch.setattr(install.shutil, "which", lambda cmd: None)
+
+    assert install.main([]) == 0
+
+    pin = config.read_pin((folder / config.PIN_FILENAME).read_text())
+    assert pin.name == "my-documents"
+    assert pin.target_id is None
