@@ -79,6 +79,7 @@ def test_idempotent_rerun(tmp_path):
 
 
 def test_heading_migration(tmp_path):
+    _git_init(tmp_path)
     (tmp_path / "CLAUDE.md").write_text(
         "# Repo\n\nIntro line.\n\n"
         "## Intent registry\n\nOld hand-pasted text.\n\n"
@@ -190,6 +191,7 @@ def test_repo_override_then_sticks(tmp_path):
 
 
 def test_codex_writes_agents_md_only(tmp_path):
+    _git_init(tmp_path)
     statuses = install.run(tmp_path, agents=("codex",), repo="cdx", url=None, dry_run=False)
     assert statuses["AGENTS.md"] == "written"
     assert "CLAUDE.md" not in statuses
@@ -846,6 +848,7 @@ def _stale_cursor_entry(key: str) -> str:
 
 
 def test_cursor_writes_agents_md_and_no_claude_artifacts(tmp_path):
+    _git_init(tmp_path)
     statuses = install.run(
         tmp_path, agents=("cursor",), repo="crsr", url=None, dry_run=False,
     )
@@ -1399,3 +1402,133 @@ def test_local_registration_is_replaced_in_local_scope(tmp_path, monkeypatch):
     assert replacement[:6] == [
         "claude", "mcp", "add", "flightplan", "--scope", "local",
     ]
+
+
+# --- where install writes: _repo_root ---------------------------------------
+# `git init` is not used here: the git toplevel is simulated by stubbing the
+# subprocess call, so these run where git cannot.
+
+def _fake_git(monkeypatch, toplevel: Path | None):
+    """Stub install's subprocess.run: `git rev-parse --show-toplevel` answers
+    `toplevel` (or fails when None), and `--is-inside-work-tree` answers true
+    when `toplevel` is set; every other git call fails, as outside a
+    repository."""
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"] and toplevel:
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{toplevel}\n", stderr="")
+        if cmd[-2:] == ["rev-parse", "--is-inside-work-tree"] and toplevel:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="not a git repository")
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
+
+
+def test_repo_root_is_the_git_toplevel_without_a_pin_here(tmp_path, monkeypatch):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    _fake_git(monkeypatch, tmp_path)
+    assert install._repo_root() == tmp_path
+
+
+@pytest.mark.parametrize("pin_name", [config.PIN_FILENAME, install.LEGACY_PIN_REL])
+def test_repo_root_prefers_a_pin_in_the_cwd_over_the_git_toplevel(
+    pin_name, tmp_path, monkeypatch,
+):
+    # A plain folder inside some parent git repo keeps its own pin. It is
+    # never written into the parent.
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / pin_name).write_text('repo = "docs"\n')
+    monkeypatch.chdir(folder)
+    _fake_git(monkeypatch, tmp_path)
+    assert install._repo_root() == folder
+
+
+def test_install_without_git_or_a_pin_names_the_folder(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    folder = tmp_path / "my-documents"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("FLIGHTPLAN_API_KEY", raising=False)
+    monkeypatch.delenv("FLIGHTPLAN_URL", raising=False)
+    _offline(monkeypatch)
+    _fake_git(monkeypatch, None)
+    monkeypatch.setattr(install.shutil, "which", lambda cmd: None)
+
+    assert install.main([]) == 0
+
+    pin = config.read_pin((folder / config.PIN_FILENAME).read_text())
+    assert pin.name == "my-documents"
+    assert pin.target_id is None
+
+
+# --- the folder snippet (decision 93bbe221) ----------------------------------
+# A folder with no git gets the folder variant of the snippet. Git is stubbed
+# with `_fake_git`, so these do not depend on the real git binary.
+
+def test_install_without_git_writes_the_folder_snippet(tmp_path, monkeypatch):
+    _fake_git(monkeypatch, None)
+    install.run(tmp_path, agents=("claude",), repo="docs", url=None, dry_run=False)
+    md = (tmp_path / "CLAUDE.md").read_text()
+    assert install.render_snippet("docs", folder=True) in md
+    assert install.render_snippet("docs") not in md
+
+
+def test_install_in_git_writes_the_repo_snippet(tmp_path, monkeypatch):
+    _fake_git(monkeypatch, tmp_path)
+    install.run(tmp_path, agents=("claude",), repo="code", url=None, dry_run=False)
+    md = (tmp_path / "CLAUDE.md").read_text()
+    assert install.render_snippet("code") in md
+    assert install.render_snippet("code", folder=True) not in md
+
+
+def test_folder_snippet_rerun_is_unchanged(tmp_path, monkeypatch):
+    _fake_git(monkeypatch, None)
+    install.run(tmp_path, agents=("claude",), repo="docs", url=None, dry_run=False)
+    before = (tmp_path / "CLAUDE.md").read_text()
+    statuses = install.run(
+        tmp_path, agents=("claude",), repo="docs", url=None, dry_run=False,
+    )
+    assert statuses["CLAUDE.md"] == "unchanged"
+    assert (tmp_path / "CLAUDE.md").read_text() == before
+
+
+@pytest.mark.parametrize("agent", ["codex", "cursor"])
+def test_agents_md_without_git_gets_the_folder_snippet(agent, tmp_path, monkeypatch):
+    _fake_git(monkeypatch, None)
+    install.run(tmp_path, agents=(agent,), repo="docs", url=None, dry_run=False)
+    md = (tmp_path / "AGENTS.md").read_text()
+    assert install.render_snippet("docs", folder=True) in md
+    assert install.render_snippet("docs") not in md
+
+
+# The bullets the folder variant copies from the repo snippet, verbatim.
+_SHARED_BULLET_PREFIXES = (
+    "If the response includes overlaps at level `warn`",
+    "**If the work changes shape",
+    "**Re-check for collisions",
+    "**When a decision gets resolved",
+)
+
+
+def _shared_bullets(asset: str) -> dict[str, str]:
+    bullets = install._asset_text(asset).split("\n- ")
+    return {
+        prefix: next(b for b in bullets if b.startswith(prefix))
+        for prefix in _SHARED_BULLET_PREFIXES
+    }
+
+
+def test_folder_snippet_shared_bullets_match_the_repo_snippet():
+    assert _shared_bullets("snippet-folder.md") == _shared_bullets("snippet.md")
+
+
+@pytest.mark.parametrize("phrase", [
+    "git diff", "mark_intent_landed", "This repo", "`branch`",
+    "this repo's registry",
+])
+def test_folder_snippet_has_no_repo_language(phrase):
+    assert phrase not in install.render_snippet(None, folder=True)
+    assert phrase not in install.render_snippet("docs", folder=True)

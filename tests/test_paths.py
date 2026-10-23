@@ -207,3 +207,25 @@ def test_a_rejected_path_is_a_tool_error_and_nothing_is_sent(
         assert "Nothing was sent" in result["advice"]
 
     assert registry.paths == [] and registry.bodies == []
+
+
+# --- FLIGHTPLAN_ROOT -------------------------------------------------------
+
+def test_relative_paths_resolve_from_flightplan_root(tmp_path, monkeypatch):
+    # A host starts the client somewhere else; FLIGHTPLAN_ROOT names the
+    # user's folder, so `./x` means the file in that folder. A root is passed
+    # in (as a workspace does), so no git repo is needed.
+    root = tmp_path / "workspace"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "plan.md").write_text("plan\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", str(root / "docs"))
+    assert paths.normalize_all(["./plan.md"], root) == ["docs/plan.md"]
+    assert paths.normalize_all(["plan.md"], root) == ["docs/plan.md"]
+    # Without it, the same values are read from the real cwd, which is
+    # outside the root.
+    monkeypatch.delenv("FLIGHTPLAN_ROOT")
+    with pytest.raises(paths.OutsideRepository):
+        paths.normalize_all(["./plan.md"], root)

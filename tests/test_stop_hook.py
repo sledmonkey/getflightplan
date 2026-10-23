@@ -22,7 +22,9 @@ PROJECT_PIN = (
 )
 
 
-def run_hook(stdin: dict, url: str, cwd: str) -> tuple[int, str]:
+def run_hook(
+    stdin: dict, url: str, cwd: str, extra_env: dict | None = None,
+) -> tuple[int, str]:
     proc = subprocess.run(
         [sys.executable, SCRIPT],
         input=json.dumps(stdin),
@@ -31,6 +33,7 @@ def run_hook(stdin: dict, url: str, cwd: str) -> tuple[int, str]:
             "PATH": "/usr/bin:/bin", "FLIGHTPLAN_URL": url, "FLIGHTPLAN_API_KEY": "k",
             # Keep the block-memory state file inside the test dir, not ~/.cache.
             "XDG_CACHE_HOME": cwd,
+            **(extra_env or {}),
         },
     )
     return proc.returncode, proc.stdout
@@ -339,3 +342,64 @@ def test_hook_pin_parser_matches_the_package(tmp_path):
         assert hook._toml_value(pin_file, "target_id") == expected.target_id
         # `target` too, now that it decides whether the check spans a subtree.
         assert hook._toml_value(pin_file, "target") == expected.target
+
+
+def _load_hook():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_hook", SCRIPT)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    return hook
+
+
+def test_find_toml_honors_flightplan_root(tmp_path, monkeypatch):
+    # The hook carries its own copy of `config.anchor_dir()`. The pin search
+    # starts at FLIGHTPLAN_ROOT, not at the cwd the host started us in.
+    hook = _load_hook()
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / ".flightplan.toml").write_text('repo = "pinned-name"\n')
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.delenv("FLIGHTPLAN_ROOT", raising=False)
+    assert hook._find_toml() is None
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", str(folder))
+    assert hook._find_toml() == (folder / ".flightplan.toml").resolve()
+    # A directory that does not exist is ignored: back to the cwd.
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", str(tmp_path / "missing"))
+    assert hook._find_toml() is None
+
+
+def test_hook_anchor_matches_the_package(tmp_path, monkeypatch):
+    # Same rule in both copies: empty, missing, relative, `~`, absolute.
+    from flightplan import config
+
+    hook = _load_hook()
+    (tmp_path / "home" / "docs").mkdir(parents=True)
+    (tmp_path / "rel").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    for value in ("", "nope", "rel", "~/docs", str(tmp_path / "rel")):
+        monkeypatch.setenv("FLIGHTPLAN_ROOT", value)
+        assert hook._anchor_dir() == config.anchor_dir()
+
+
+def test_the_hook_asks_under_the_pin_at_flightplan_root(tmp_path):
+    # End to end: the host starts the hook somewhere else.
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / ".flightplan.toml").write_text('repo = "pinned-name"\nurl = "http://unused"\n')
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    server, url = stub_registry([])
+    try:
+        code, _out = run_hook(
+            {"stop_hook_active": False}, url, str(elsewhere),
+            extra_env={"FLIGHTPLAN_ROOT": str(folder)},
+        )
+        assert code == 0
+        assert any("repo=pinned-name" in path for path in server.requests)
+    finally:
+        server.shutdown()

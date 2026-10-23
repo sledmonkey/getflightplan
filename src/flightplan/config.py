@@ -31,6 +31,7 @@ Stdlib only.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -39,6 +40,11 @@ PIN_FILENAME = ".flightplan.toml"
 
 # The hosted service. Every consumer falls back to it when nothing overrides.
 DEFAULT_URL = "https://api.getflightplan.com"
+
+# Names a local directory that stands in for the process cwd. Some hosts start
+# the MCP server from a directory that is not the user's folder, so a pin
+# search from the cwd never finds the pin. The value stays on this machine.
+ROOT_ENV = "FLIGHTPLAN_ROOT"
 
 
 class Pin(NamedTuple):
@@ -71,9 +77,32 @@ def read_pin(text: str) -> Pin:
     )
 
 
+def anchor_dir() -> Path:
+    """The directory that stands in for the cwd: FLIGHTPLAN_ROOT when it names
+    an existing directory, else the real cwd.
+
+    `~` expands, and a relative value resolves against the real cwd. An empty
+    value, or one that is not a directory, is ignored without an error: the
+    registry is advisory and must never block. The stop hook carries a copy of
+    this rule (`_anchor_dir`), so change both together.
+    """
+    cwd = Path.cwd()
+    raw = os.environ.get(ROOT_ENV, "").strip()
+    if not raw:
+        return cwd
+    try:
+        candidate = cwd / Path(raw).expanduser()
+        if candidate.is_dir():
+            return candidate.resolve()
+    except (OSError, RuntimeError):
+        pass  # e.g. `~user` for an unknown user
+    return cwd
+
+
 def find_pin_file(start: Path | None = None) -> Path | None:
-    """The nearest `.flightplan.toml`, walking `start` (default cwd) upward."""
-    here = start or Path.cwd()
+    """The nearest `.flightplan.toml`, walking `start` upward. The default
+    start is `anchor_dir()`: FLIGHTPLAN_ROOT when set, else the cwd."""
+    here = start or anchor_dir()
     for d in (here, *here.parents):
         candidate = d / PIN_FILENAME
         if candidate.exists():

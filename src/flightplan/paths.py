@@ -30,6 +30,10 @@ caller passes the workspace root instead (the pin file's own directory — a
 workspace is not itself a git repo, so there would be no root at all). The
 rules above are unchanged, they just measure from there; see workspace.py.
 
+"The cwd" above is `config.anchor_dir()`: FLIGHTPLAN_ROOT when it names a
+directory, else the process cwd. A host that starts the client from some other
+directory can set it so relative paths resolve from the user's folder.
+
 Outside a git repository, and with no root passed in, there is no bound root,
 nothing is rewritten, and nothing is rejected. Stdlib only — subprocess git and
 pathlib, no dependency beyond the thin client's own.
@@ -40,6 +44,8 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+
+from . import config
 
 _WILDCARD = re.compile(r"[*?\[]")
 
@@ -139,7 +145,7 @@ def normalize_all(
     """
     if not values:
         return values
-    cwd = Path.cwd().resolve()
+    cwd = config.anchor_dir().resolve()
     root = root or repo_root(cwd)
     if root is None:
         return list(values)

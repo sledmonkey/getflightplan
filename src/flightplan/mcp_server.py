@@ -57,7 +57,7 @@ ALERT_RANK = {"warn": 0, "nudge": 1, "fyi": 2}
 mcp = FastMCP(
     "flightplan",
     instructions=(
-        "Team intent registry. Before starting any non-trivial coding task, call "
+        "Team intent registry. Before starting any non-trivial task, call "
         "post_intent; when the work finishes or is abandoned, call complete_intent "
         "with an outcome paragraph. Collision checks go stale over a long session: "
         "before editing a shared doc or artifact you did not create this session, "
@@ -80,7 +80,11 @@ def _client() -> httpx.AsyncClient:
         )
     return httpx.AsyncClient(
         base_url=url.rstrip("/"),
-        headers={"Authorization": f"Bearer {key}"},
+        headers={
+            "Authorization": f"Bearer {key}",
+            # Lets the service tell a reader's own work from others' (b555f228).
+            "X-FlightPlan-Session": SESSION,
+        },
         # The post path runs the judge synchronously, worst case two model calls
         # (primary + fallback) at ~8s each before it degrades to globs — so 10s
         # would time out the client before the server's own budget elapses.
@@ -400,7 +404,7 @@ async def _fan_out(
 @mcp.tool(
     description=(
         "Register what you are about to work on so other developers' agents can "
-        "avoid collisions. Call this before starting any non-trivial coding task "
+        "avoid collisions. Call this before starting any non-trivial task "
         "(anything touching more than a trivial fix). Infer `kind`: `build` for "
         "work meant to land, `explore`/`spike` for throwaway investigation, "
         "`decision` for a resolved decision worth recording (post it the moment a "
@@ -677,12 +681,14 @@ async def update_intent(
         "system produces: write one paragraph covering what actually changed, "
         "anything surprising, approaches tried and rejected, and anything "
         "deliberately left in place. "
-        "Gather git facts as exhaust — you already have them at completion time: "
+        "Gather git facts you already have at completion time: "
         "`files` = repo-relative paths actually changed (`git diff --name-only` "
         "over the work, committed or not); `commits` = SHAs created for this "
         "work; `uncommitted` = true if ANY of the work is not yet committed "
-        "(untracked/unstaged/staged-only) — this flag is what lets other agents' "
-        "collision checks warn loudly instead of quietly. Omit anything unknown. "
+        "(untracked/unstaged/staged-only), false if all of it is. True makes "
+        "other agents' collision checks warn loudly. Outside git, omit "
+        "`uncommitted` and `commits` (there is no commit to wait for), but still "
+        "send `files`. Omit anything unknown. "
         "Any overlaps that come back carry excerpts, and `overlaps_omitted` "
         "counts the ones the server cut per level — use `get_intent(id)` for a "
         "full record."
@@ -705,7 +711,7 @@ async def complete_intent(
     ] = None,
     uncommitted: Annotated[
         bool | None,
-        Field(description="True if ANY of the work is not yet committed (untracked/unstaged/staged-only). This flag escalates collision warnings for other agents. False = all committed. Omit if unknown."),
+        Field(description="True if ANY of the work is not yet committed (untracked/unstaged/staged-only). This flag escalates collision warnings for other agents. False = all committed. Outside git, omit it: there is no commit to wait for. Omit if unknown."),
     ] = None,
 ) -> dict:
     _, ws = _binding()

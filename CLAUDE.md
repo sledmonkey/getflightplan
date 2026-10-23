@@ -32,10 +32,10 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
   actually changed, anything surprising, approaches tried and rejected, anything
   deliberately left in place. If a `warn` overlap changed how the work went
   (coordinated, narrowed scope, proceeded anyway), say which. Attach the git
-  facts you already know: `files` actually changed (`git diff --name-only`),
-  `commits` created, and `uncommitted: true` if any of the work is not yet
-  committed — that flag is what lets other agents' collision checks warn loudly
-  instead of quietly. Completing an intent ends the slice, not the session:
+  facts you have: `files` changed (`git diff --name-only`), `commits` created,
+  and `uncommitted` — `true` if any work is not committed, `false` if all is.
+  Outside git, omit `uncommitted` and `commits` (no commit to wait for); still
+  send `files`. Completing an intent ends the slice, not the session:
   follow-up work after a complete that changes behavior, defaults, or contracts
   gets a fresh post — "same session" doesn't exempt it.
 - **When you learn declared-uncommitted work has landed**, call

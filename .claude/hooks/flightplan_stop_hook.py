@@ -10,9 +10,14 @@ Stop entry written into `.claude/settings.json`:
         "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/flightplan_stop_hook.py\""}]}]}}
 
 Config chain (all advisory, degrade to allowing the stop):
-  - repo: the readable name from the nearest `.flightplan.toml` (cwd, then each
-    parent) — `name = "..."`, else the older `repo = "..."` — then git origin
-    basename, then cwd name. The pin comes first so every agent on this repo —
+  - anchor: FLIGHTPLAN_ROOT when it names an existing directory, else the
+    cwd. It stands in for the cwd everywhere below. `~` expands; a relative
+    value resolves against the cwd; an empty or missing directory is ignored.
+    Some hosts start the agent from a directory that is not the user's folder;
+    this lets them point at it. The value never leaves this machine.
+  - repo: the readable name from the nearest `.flightplan.toml` (anchor, then
+    each parent) — `name = "..."`, else the older `repo = "..."` — then git origin
+    basename, then anchor name. The pin comes first so every agent on this repo —
     and this hook — ask about the one name intents were posted under. This
     mirrors `flightplan/config.py`; the two must agree. It is duplicated
     because this file runs standalone under whatever `python3` is on PATH.
@@ -77,11 +82,27 @@ TIMEOUT = 4  # seconds; a slow registry must not make ending a session slow
 BLOCK_MEMORY = 24 * 3600  # seconds a recorded block keeps suppressing repeats
 
 
-def _find_toml() -> Path | None:
-    """The nearest `.flightplan.toml`, walking cwd upward — where
-    `getflightplan install` pins the repo name and url."""
+def _anchor_dir() -> Path:
+    """FLIGHTPLAN_ROOT when it names an existing directory, else the cwd.
+    Mirrors `flightplan.config.anchor_dir()`; the two must agree."""
     cwd = Path.cwd()
-    for d in (cwd, *cwd.parents):
+    raw = os.environ.get("FLIGHTPLAN_ROOT", "").strip()
+    if not raw:
+        return cwd
+    try:
+        candidate = cwd / Path(raw).expanduser()
+        if candidate.is_dir():
+            return candidate.resolve()
+    except (OSError, RuntimeError):
+        pass  # e.g. `~user` for an unknown user
+    return cwd
+
+
+def _find_toml() -> Path | None:
+    """The nearest `.flightplan.toml`, walking the anchor upward — where
+    `getflightplan install` pins the repo name and url."""
+    anchor = _anchor_dir()
+    for d in (anchor, *anchor.parents):
         candidate = d / ".flightplan.toml"
         if candidate.exists():
             return candidate
@@ -123,7 +144,7 @@ def config() -> tuple[str, str] | None:
 
 def repo_name() -> str:
     """The name intents were posted under: the toml pin first, else the old
-    derivation (git origin basename, else cwd name) for repos the installer
+    derivation (git origin basename, else anchor name) for repos the installer
     hasn't touched yet.
 
     Either pin shape works — `name` alongside a pinned id, or the older bare
@@ -138,12 +159,13 @@ def repo_name() -> str:
         origin = subprocess.run(
             ["git", "remote", "get-url", "origin"],
             capture_output=True, text=True, timeout=TIMEOUT,
+            cwd=str(_anchor_dir()),
         ).stdout.strip()
         if origin:
             return Path(origin.removesuffix(".git")).name
     except Exception:
         pass
-    return Path.cwd().name
+    return _anchor_dir().name
 
 
 def pinned_target() -> tuple[str | None, str | None]:
@@ -196,7 +218,7 @@ def _block_key(payload: dict, repo: str, intents: list[dict]) -> str:
     if not session:
         # A harness that identifies the session in no way we know degrades to
         # one nag per (repo, intent set) per machine per BLOCK_MEMORY.
-        session = str(Path.cwd())
+        session = str(_anchor_dir())
     ids = ",".join(sorted(i.get("id", "") for i in intents))
     return hashlib.sha256(f"{session}\n{repo}\n{ids}".encode()).hexdigest()
 

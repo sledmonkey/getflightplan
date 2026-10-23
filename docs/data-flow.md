@@ -10,6 +10,10 @@ Two things worth being explicit about:
   your work, so they can name files, functions, bugs, and design choices.
   They are the product — that description is what other agents on your team
   read. If a repo is sensitive, that prose is the surface to think about.
+
+  In document work, summaries and outcomes can name people who appear in the
+  documents, such as the subject of a resume. That prose goes to the service
+  like any other summary. Keep names out when the work does not need them.
 - **Your identity is not sent with your work.** The author name shown on
   intents is derived server-side from the API key. No intent call carries a
   username, email, hostname, or machine identifier. The one exception is
@@ -38,6 +42,28 @@ When `.flightplan.toml` pins a workspace rather than a single repository, the
 same rule measures from the workspace directory instead, so paths are sent
 relative to it and carry the child repository's directory name. Values
 resolving outside the workspace are rejected the same way.
+
+### Where the client looks for the pin
+
+The client finds `.flightplan.toml` by looking in the current directory, then
+in each parent. Some hosts start the client in a directory that is not your
+folder, so it never finds the pin. Set `FLIGHTPLAN_ROOT` to fix this. It is a
+directory on this machine, and the client uses it in place of the current
+directory: the pin search starts there, and relative paths resolve from there.
+`~` expands, and a relative value resolves against the current directory. If
+the value is empty or the directory does not exist, the client ignores it.
+
+The value of `FLIGHTPLAN_ROOT` is never sent to the service. Paths are still
+sent relative to the repository or workspace, as described above.
+
+## The session id
+
+Every request the MCP server makes carries a session id in the
+`X-FlightPlan-Session` header. It is a random 12-character id, made when the
+server starts, and it is the same id already sent with each post. It says
+nothing about you or your machine. The service uses it to keep your own work
+out when it records that another session found work in progress. The stop
+hook and the CLI commands do not send it.
 
 ## Logging in
 
@@ -78,6 +104,9 @@ At session end, the hook installed at `.claude/hooks/flightplan_stop_hook.py`
 makes one read-only request: "are there active intents in this repo?" It
 sends the repo name and reads the answer. If the registry is unreachable or
 unconfigured, it silently allows the session to end. It sends nothing else.
+
+The hook finds the pin the same way the client does, so it also reads
+`FLIGHTPLAN_ROOT`. The value stays on this machine.
 
 Some harnesses run this hook without Claude Code's retry flag. For those,
 the hook remembers each delivered nag as one empty marker file in
