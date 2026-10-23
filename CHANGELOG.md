@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
 ### Added
 - `FLIGHTPLAN_ROOT` names the folder the client treats as its working
   directory: the pin search starts there, and relative paths resolve against
@@ -357,7 +359,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/sledmonkey/getflightplan/compare/v0.15.2...v0.17.0
 [0.15.2]: https://github.com/sledmonkey/getflightplan/compare/v0.15.0...v0.15.2
 [0.15.0]: https://github.com/sledmonkey/getflightplan/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/sledmonkey/getflightplan/compare/v0.13.5...v0.14.0
