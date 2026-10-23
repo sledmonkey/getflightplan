@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `FLIGHTPLAN_ROOT` names the folder the client treats as its working
+  directory: the pin search starts there, and relative paths resolve against
+  it. Some hosts start the MCP server from a directory that is not the user's
+  folder, so the pin was never found. The value is a local path and never
+  leaves the machine. An empty or missing directory is ignored.
+
+### Changed
+- The agent snippet and the `complete_intent` tool text now say to omit
+  `uncommitted` and `commits` in a folder with no git, and to still send
+  `files`. Before, an agent in a plain folder could report `uncommitted: true`
+  forever, which turned every overlap on those paths into a `warn` for the
+  settle window.
+- `getflightplan install` writes to the current folder when that folder
+  already holds a pin, even inside a parent git repo. Before, the pin went to
+  the git toplevel. `register`, `login`, and `landed` share the rule.
+- In a folder with no git, `getflightplan install` writes a folder version of
+  the agent snippet. It asks agents to post before work that others may use
+  or edit, and it drops the git steps. A git repo still gets the same snippet.
+- Every request from the MCP server now sends its session id in the
+  `X-FlightPlan-Session` header, not only posts. The service uses it to keep
+  your own work out when it records that another session found work in
+  progress.
+- The MCP server instructions and the `post_intent` tool text say
+  "non-trivial task" where they said "non-trivial coding task". The registry
+  is for any shared work, not only code.
+
 ## [0.15.2] - 2026-10-03
 
 ### Changed

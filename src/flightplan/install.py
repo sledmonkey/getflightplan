@@ -133,23 +133,27 @@ def _asset_text(name: str) -> str:
     ).read_text(encoding="utf-8")
 
 
-def render_snippet(repo: str | None) -> str:
+def render_snippet(repo: str | None, *, folder: bool = False) -> str:
     """Fill the snippet template's one repo-name slot and return the result.
 
     `repo=None` renders the manual-derivation clause (the canonical template, as
     it appears in the README); a name renders the pinned clause. Plain
     `.replace`, never `str.format` — the snippet is full of literal braces
     (`kind: "decision"` etc.), so `format` would blow up.
+
+    `folder=True` picks the folder variant (decision 93bbe221): the snippet for
+    a folder with no git. It has the same `{repo_clause}` slot.
     """
     clause = _MANUAL_CLAUSE if repo is None else (
         f"use `{repo}` (pinned in `.flightplan.toml`; do not derive it)"
     )
-    return _asset_text("snippet.md").replace("{repo_clause}", clause)
+    template = "snippet-folder.md" if folder else "snippet.md"
+    return _asset_text(template).replace("{repo_clause}", clause)
 
 
-def _snippet_block(repo: str | None) -> str:
+def _snippet_block(repo: str | None, *, folder: bool = False) -> str:
     """The rendered snippet wrapped in managed markers, newline-terminated."""
-    return f"{BEGIN_MARKER}\n{render_snippet(repo)}{END_MARKER}\n"
+    return f"{BEGIN_MARKER}\n{render_snippet(repo, folder=folder)}{END_MARKER}\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -170,6 +174,20 @@ def _derive_repo(root: Path) -> str:
     except Exception:
         pass
     return root.name
+
+
+def _has_git(root: Path) -> bool:
+    """True when `root` is inside a git work tree. Any failure (no git binary,
+    a timeout, an error) reads as no git. A folder with its own pin inside a
+    parent git repo is inside a work tree, so it gets the repo snippet."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.returncode == 0 and out.stdout.strip() == "true"
+    except Exception:
+        return False
 
 
 class Resolved(NamedTuple):
@@ -468,8 +486,10 @@ def run(
         if not dry_run:
             legacy_pin.unlink()
 
-    # 2. The agent snippet block, into CLAUDE.md and/or AGENTS.md.
-    block = _snippet_block(name)
+    # 2. The agent snippet block, into CLAUDE.md and/or AGENTS.md. A folder
+    #    with no git gets the folder variant (decision 93bbe221). The `write`
+    #    status compares against this same block, so a re-run reads unchanged.
+    block = _snippet_block(name, folder=not _has_git(root))
     snippet_targets = []
     if "claude" in agents:
         snippet_targets.append("CLAUDE.md")
@@ -1251,6 +1271,12 @@ def _register_agents(
 # --------------------------------------------------------------------------- #
 
 def _repo_root() -> Path:
+    """Where install writes. A pin already in the cwd wins: a plain folder
+    of documents inside some parent git repo keeps its own pin, and it is
+    never written into the parent. Else the git toplevel, else the cwd."""
+    cwd = Path.cwd()
+    if (cwd / config.PIN_FILENAME).exists() or (cwd / LEGACY_PIN_REL).exists():
+        return cwd
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],

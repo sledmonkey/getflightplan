@@ -58,7 +58,9 @@ def read_wheel(built, suffix):
 
 
 def test_wheel_ships_install_assets(wheel_names):
-    for asset in ("snippet.md", "registry-digest.md", "stop_hook.py"):
+    for asset in (
+        "snippet.md", "snippet-folder.md", "registry-digest.md", "stop_hook.py",
+    ):
         assert f"flightplan/install_assets/{asset}" in wheel_names
 
 
@@ -88,6 +90,7 @@ def test_wheel_entry_point(built):
 
 def test_sdist_ships_source_and_tests(sdist_names):
     assert "src/flightplan/install_assets/snippet.md" in sdist_names
+    assert "src/flightplan/install_assets/snippet-folder.md" in sdist_names
     assert "LICENSE" in sdist_names
     assert "CHANGELOG.md" in sdist_names
     assert any(n.startswith("tests/") for n in sdist_names)

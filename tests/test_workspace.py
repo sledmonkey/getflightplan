@@ -210,6 +210,71 @@ def test_paths_outside_the_workspace_are_rejected(ws, registry, call):
     assert registry.paths == []
 
 
+# --- a project with no child repositories ---------------------------------
+# A plain folder of documents can carry a project pin and hold no repository
+# at all. Every post stays at the project, and nothing is split.
+
+@pytest.fixture
+def bare_ws(tmp_path, monkeypatch) -> Path:
+    """A project-pinned folder with zero child repositories: files and an
+    unpinned directory only. Cwd starts at the folder."""
+    root = tmp_path / "documents"
+    (root / "drafts").mkdir(parents=True)
+    (root / ".flightplan.toml").write_text(PROJECT_PIN)
+    (root / "plan.md").write_text("plan\n")
+    (root / "drafts" / "intro.md").write_text("intro\n")
+    monkeypatch.chdir(root)
+    return root
+
+
+def test_a_bare_project_discovers_no_children(bare_ws):
+    assert _bound(bare_ws).children == {}
+
+
+def test_a_bare_project_posts_relative_paths_at_the_project(bare_ws, registry, call):
+    _post(call, touches=["plan.md", "drafts/intro.md", "drafts/new.md"])
+    body = registry.body
+    assert body["target_id"] == "proj_5b71ee"
+    assert body["touches"] == ["plan.md", "drafts/intro.md", "drafts/new.md"]
+    assert "repositories" not in body
+
+
+def test_a_bare_project_passes_empty_touches_through(bare_ws, registry, call):
+    _post(call, touches=[])
+    body = registry.body
+    assert body["target_id"] == "proj_5b71ee"
+    assert body.get("touches", []) == []
+    assert "repositories" not in body
+
+
+def test_a_bare_project_completes_with_files_at_the_project(bare_ws, registry, call):
+    _fetched(registry, "proj_5b71ee")
+    call(mcp_server.complete_intent(
+        id="3f1a", status="done", outcome="o", files=["plan.md", "drafts/intro.md"],
+    ))
+    body = registry.body
+    assert registry.paths == ["/intents/3f1a", "/intents/3f1a"]
+    assert body["files"] == ["plan.md", "drafts/intro.md"]
+    # A project patch always carries the split; with no children it is empty,
+    # which tells the registry there is no per-repository part.
+    assert body["repositories"] == []
+
+
+def test_flightplan_root_binds_the_project_from_elsewhere(
+    bare_ws, registry, call, monkeypatch,
+):
+    # A host starts the server in some other directory. FLIGHTPLAN_ROOT names
+    # the folder, so the pin is found and `./` paths resolve from there.
+    elsewhere = bare_ws.parent / "host-dir"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("FLIGHTPLAN_ROOT", str(bare_ws / "drafts"))
+    _post(call, touches=["./intro.md"])
+    body = registry.body
+    assert body["target_id"] == "proj_5b71ee"
+    assert body["touches"] == ["drafts/intro.md"]
+
+
 # --- one file, three vantage points ----------------------------------------
 
 def test_one_file_from_the_workspace_and_from_inside_the_repo(
