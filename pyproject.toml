@@ -18,8 +18,10 @@ classifiers = [
     "Topic :: Software Development",
 ]
 # The MCP stdio client's runtime deps — the whole dependency surface of this
-# package. mcp<2: SDK 2.0 removes mcp.server.fastmcp.
+# package. mcp<2: SDK 2.0 removes mcp.server.fastmcp. certifi floor: older
+# bundles still trust emSign (eMudhra incident, 2026-10).
 dependencies = [
+    "certifi>=2026.10.19",
     "httpx>=0.27,<0.28",
     "mcp>=1.2,<2",
 ]

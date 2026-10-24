@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- The client now needs certifi 2026.10.19 or later. Older bundles still trust
+  the emSign root, and keys under it leaked in the eMudhra incident. An
+  attacker could use a forged certificate to read your API key in transit.
+  Run `uv tool upgrade getflightplan` to get the fix.
+
 ## [0.17.0] - 2026-10-23
 
 ### Added
