@@ -167,9 +167,11 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
   facts you have: `files` changed (`git diff --name-only`), `commits` created,
   and `uncommitted` — `true` if any work is not committed, `false` if all is.
   Outside git, omit `uncommitted` and `commits` (no commit to wait for); still
-  send `files`. Completing an intent ends the slice, not the session:
-  follow-up work after a complete that changes behavior, defaults, or contracts
-  gets a fresh post — "same session" doesn't exempt it.
+  send `files`. Send `files: []` only when this work changed no files,
+  committed or not; omit `files` when you do not know. Completing an intent
+  ends the slice, not the session: follow-up work after a complete that
+  changes behavior, defaults, or contracts gets a fresh post — "same session"
+  doesn't exempt it.
 - **When you learn declared-uncommitted work has landed**, call
   `mark_intent_landed` with that intent's id (and the commit SHAs if you know
   them): until someone says so, the registry keeps warning everyone who touches

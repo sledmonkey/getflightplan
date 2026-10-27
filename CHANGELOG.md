@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- The agent snippet and the `complete_intent` tool text now say to send an
+  empty `files` list only when the work changed no files. When you do not
+  know, leave `files` out.
+
 ## [0.17.1] - 2026-10-25
 
 ### Security

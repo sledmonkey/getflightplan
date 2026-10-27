@@ -35,10 +35,11 @@ next person's agent can see it.
   deliberately left in place (a typo kept on purpose, a value you could not
   check). If a `warn` overlap changed how the work went (coordinated, narrowed
   scope, proceeded anyway), say which. Send `files`: the paths you actually
-  changed, relative to this folder. This folder has no git, so do not send
-  `commits` or `uncommitted`. Completing an intent ends the slice, not the
-  session: follow-up work after a complete that changes a shared file gets a
-  fresh post — "same session" doesn't exempt it.
+  changed, relative to this folder. Send `files: []` only when this work
+  changed no files; omit `files` when you do not know. This folder has no
+  git, so do not send `commits` or `uncommitted`. Completing an intent ends
+  the slice, not the session: follow-up work after a complete that changes a
+  shared file gets a fresh post — "same session" doesn't exempt it.
 - **Re-check for collisions whenever your picture of in-flight work may be
   stale** — posting checks once, and it goes stale over a long session.
   Re-check moments: a file changed between your read and your edit, or an Edit
