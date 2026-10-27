@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-27
+
+### Changed
+- The agent snippet and the `complete_intent` tool text now say to send an
+  empty `files` list only when the work changed no files. When you do not
+  know, leave `files` out.
+
 ## [0.17.1] - 2026-10-25
 
 ### Security
@@ -367,7 +374,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.17.2...HEAD
+[0.17.2]: https://github.com/sledmonkey/getflightplan/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/sledmonkey/getflightplan/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/sledmonkey/getflightplan/compare/v0.15.2...v0.17.0
 [0.15.2]: https://github.com/sledmonkey/getflightplan/compare/v0.15.0...v0.15.2

@@ -688,7 +688,8 @@ async def update_intent(
         "(untracked/unstaged/staged-only), false if all of it is. True makes "
         "other agents' collision checks warn loudly. Outside git, omit "
         "`uncommitted` and `commits` (there is no commit to wait for), but still "
-        "send `files`. Omit anything unknown. "
+        "send `files`. Send `files: []` only when this work changed no files, "
+        "committed or not; omit `files` when you do not know. Omit anything unknown. "
         "Any overlaps that come back carry excerpts, and `overlaps_omitted` "
         "counts the ones the server cut per level — use `get_intent(id)` for a "
         "full record."
@@ -703,7 +704,7 @@ async def complete_intent(
     ],
     files: Annotated[
         list[str] | None,
-        Field(description="Repo-relative paths actually changed (from `git diff --name-only` over the work). Omit if unknown."),
+        Field(description="Repo-relative paths actually changed (from `git diff --name-only` over the work). Send [] only when this work changed no files, committed or not. Omit if unknown."),
     ] = None,
     commits: Annotated[
         list[str] | None,
