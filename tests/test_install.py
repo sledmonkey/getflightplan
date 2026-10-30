@@ -1525,6 +1525,14 @@ def test_folder_snippet_shared_bullets_match_the_repo_snippet():
     assert _shared_bullets("snippet-folder.md") == _shared_bullets("snippet.md")
 
 
+@pytest.mark.parametrize("folder", [False, True])
+def test_connector_sentence_renders_only_with_a_pin(folder):
+    sentence = "pass the pin's\n  `target_id` as `project`."
+    assert sentence in install.render_snippet("docs", folder=folder)
+    assert sentence not in install.render_snippet(None, folder=folder)
+    assert "{connector_clause}" not in install.render_snippet(None, folder=folder)
+
+
 @pytest.mark.parametrize("phrase", [
     "git diff", "mark_intent_landed", "This repo", "`branch`",
     "this repo's registry",

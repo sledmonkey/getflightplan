@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-30
+
+### Changed
+- The pinned agent snippet now tells an agent that reaches FlightPlan
+  through the remote connector to pass the pin's `target_id` as `project`.
+  The connector tools take that argument; the stdio tools read the pin
+  themselves, so their path does not change.
+
 ## [0.17.2] - 2026-10-27
 
 ### Changed
@@ -374,7 +382,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.17.2...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/sledmonkey/getflightplan/compare/v0.17.2...v0.19.0
 [0.17.2]: https://github.com/sledmonkey/getflightplan/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/sledmonkey/getflightplan/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/sledmonkey/getflightplan/compare/v0.15.2...v0.17.0

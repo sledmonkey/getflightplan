@@ -11,7 +11,9 @@ This repo participates in the team intent registry (MCP server: `flightplan`).
   `explore`/`spike` for throwaway investigation), and `touches` globs for the
   areas you expect to change. Keep the returned id for later. For `repo`,
   use `getflightplan` (pinned in `.flightplan.toml`; do not derive it) — every agent on this repo must use the same name or
-  collision checks silently miss each other. The response may include
+  collision checks silently miss each other.
+  When you reach FlightPlan through the remote connector, pass the pin's
+  `target_id` as `project`. The response may include
   `context`: recent completed work relevant to your task — read those outcomes
   before starting; the surprises and dead ends in them are load-bearing.
 - If the response includes overlaps at level `warn`, check what the overlap is

@@ -120,6 +120,13 @@ _MANUAL_CLAUSE = (
     "name if there is no remote)"
 )
 
+# Added to the pinned snippet only: how the pin travels when the agent reaches
+# FlightPlan through the remote connector instead of the stdio server.
+_CONNECTOR_CLAUSE = (
+    "\n  When you reach FlightPlan through the remote connector, pass the pin's"
+    "\n  `target_id` as `project`."
+)
+
 
 # --------------------------------------------------------------------------- #
 # Assets
@@ -147,8 +154,15 @@ def render_snippet(repo: str | None, *, folder: bool = False) -> str:
     clause = _MANUAL_CLAUSE if repo is None else (
         f"use `{repo}` (pinned in `.flightplan.toml`; do not derive it)"
     )
+    # Only a pinned repo has a target_id to pass. The remote connector's
+    # tools take `project`; the stdio tools read the pin themselves.
+    connector = "" if repo is None else _CONNECTOR_CLAUSE
     template = "snippet-folder.md" if folder else "snippet.md"
-    return _asset_text(template).replace("{repo_clause}", clause)
+    return (
+        _asset_text(template)
+        .replace("{repo_clause}", clause)
+        .replace("{connector_clause}", connector)
+    )
 
 
 def _snippet_block(repo: str | None, *, folder: bool = False) -> str:
