@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- The pinned agent snippet now tells an agent that reaches FlightPlan
+  through the remote connector to pass the pin's `target_id` as `project`.
+  The connector tools take that argument; the stdio tools read the pin
+  themselves, so their path does not change.
+
 ## [0.17.2] - 2026-10-27
 
 ### Changed

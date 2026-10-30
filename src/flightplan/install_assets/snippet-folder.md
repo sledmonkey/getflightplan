@@ -12,7 +12,7 @@ next person's agent can see it.
   work meant to stay, `explore` for an investigation), and `touches`: the
   files or folders you expect to change, relative to this folder. Keep the
   returned id for later. For `repo`, {repo_clause} — every agent in this
-  folder must use the same name or collision checks silently miss each other.
+  folder must use the same name or collision checks silently miss each other.{connector_clause}
   The response may include `context`: recent finished work relevant to your
   task — read those outcomes before starting; the surprises and dead ends in
   them are load-bearing.
