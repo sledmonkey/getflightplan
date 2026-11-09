@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `getflightplan login` no longer sends the machine hostname. It was the
+  credential's label on the `/devices` page, and the one fact about your
+  machine the client sent. The service now names the credential after the
+  browser that approves it. `docs/data-flow.md` no longer lists an
+  exception.
+
 ## [0.19.0] - 2026-10-30
 
 ### Changed

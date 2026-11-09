@@ -241,13 +241,13 @@ def test_browser_flow_stores_the_credential(tmp_path, monkeypatch, capsys):
     finally:
         server.shutdown()
 
-    # The authorize address carries the challenge for our verifier, a
-    # 127.0.0.1 callback, and a label.
+    # The authorize address carries the challenge for our verifier and a
+    # 127.0.0.1 callback. Nothing else: no label, no fact about this machine.
     query = seen["query"]
+    assert set(query) == {"challenge", "redirect_uri"}
     assert seen["target"].startswith(f"{url}/cli/authorize?")
     assert query["redirect_uri"][0].startswith("http://127.0.0.1:")
     assert query["redirect_uri"][0].endswith("/callback")
-    assert query["label"][0]
 
     # The exchange carries the code from the redirect and the matching verifier.
     exchanged = seen["exchange"]
@@ -328,9 +328,9 @@ def test_headless_flow_polls_then_stores(tmp_path, monkeypatch, capsys):
     finally:
         server.shutdown()
 
-    # The start call carries the challenge and the label.
+    # The start call carries the challenge only. No label goes out.
     start_body = server.calls[0][1]
-    assert set(start_body) == {"challenge", "label"}
+    assert set(start_body) == {"challenge"}
 
     # Every poll carries the device code and the verifier — never the code of
     # the browser flow.

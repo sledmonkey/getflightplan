@@ -43,7 +43,6 @@ import hashlib
 import json
 import os
 import secrets
-import socket
 import time
 import urllib.error
 import urllib.parse
@@ -108,19 +107,17 @@ def resolve_url(flag: str | None = None, start: Path | None = None) -> str:
     return url.rstrip("/")
 
 
-def authorize_url(url: str, challenge: str, redirect_uri: str, label: str) -> str:
-    """The page the browser opens for the approval."""
+def authorize_url(url: str, challenge: str, redirect_uri: str) -> str:
+    """The page the browser opens for the approval.
+
+    No label goes out. The service names the credential from the browser
+    that approves it, so the client sends no fact about this machine.
+    """
     query = urllib.parse.urlencode({
         "challenge": challenge,
         "redirect_uri": redirect_uri,
-        "label": label,
     })
     return f"{url}/cli/authorize?{query}"
-
-
-def device_label() -> str:
-    """The name shown beside the credential on the /devices page."""
-    return socket.gethostname() or "unknown host"
 
 
 # --------------------------------------------------------------------------- #
@@ -261,11 +258,9 @@ def exchange(url: str, code: str, verifier: str, replaces: str | None = None) ->
     return body
 
 
-def device_start(url: str, challenge: str, label: str) -> dict:
+def device_start(url: str, challenge: str) -> dict:
     """Start the headless flow. Returns the user code and where to type it."""
-    status, body = post_json(
-        f"{url}/auth/device/start", {"challenge": challenge, "label": label},
-    )
+    status, body = post_json(f"{url}/auth/device/start", {"challenge": challenge})
     if status != 200 or not body.get("device_code"):
         raise LoginError(_service_error(status, body))
     return body
@@ -311,7 +306,7 @@ def _service_error(status: int, body: dict) -> str:
 # Storing the credential
 # --------------------------------------------------------------------------- #
 
-def store(credential: dict, label: str) -> int:
+def store(credential: dict) -> int:
     """Write the credential to the env file and report where it went.
 
     The token itself is never printed, and it never goes into a file in the
@@ -321,10 +316,15 @@ def store(credential: dict, label: str) -> int:
     if not token:
         raise LoginError("The service returned no token.")
     path = install._write_key_file(token)
-    name = credential.get("label") or label
-    identifier = credential.get("credential_id", "")
-    shown = f'"{name}" ({identifier})' if identifier else f'"{name}"'
-    print(f"The credential {shown} is stored in {path}.")
+    # The service names the credential. The name can be missing.
+    name = credential.get("label")
+    identifier = credential.get("credential_id")
+    parts = ["The credential"]
+    if name:
+        parts.append(f'"{name}"')
+    if identifier:
+        parts.append(f"({identifier})")
+    print(f"{' '.join(parts)} is stored in {path}.")
     return 0
 
 
@@ -332,9 +332,9 @@ def store(credential: dict, label: str) -> int:
 # The two flows
 # --------------------------------------------------------------------------- #
 
-def run_headless(url: str, verifier: str, challenge: str, label: str, sleep=time.sleep) -> int:
+def run_headless(url: str, verifier: str, challenge: str, sleep=time.sleep) -> int:
     """The code flow: start, print the code, poll until the user approves."""
-    started = device_start(url, challenge, label)
+    started = device_start(url, challenge)
     print(
         f"Open {started.get('verification_uri', url)} and enter the code "
         f"{started.get('user_code', '')}."
@@ -344,25 +344,25 @@ def run_headless(url: str, verifier: str, challenge: str, label: str, sleep=time
         url, started["device_code"], verifier, interval, sleep=sleep,
         replaces=stored_credential_id(),
     )
-    return store(credential, label)
+    return store(credential)
 
 
-def run_browser(url: str, verifier: str, challenge: str, label: str, sleep=time.sleep) -> int:
+def run_browser(url: str, verifier: str, challenge: str, sleep=time.sleep) -> int:
     """The browser flow, with the headless flow as the fallback."""
     try:
         server = make_listener()
     except OSError:
         print("The callback port is not available. FlightPlan uses a code instead.")
-        return run_headless(url, verifier, challenge, label, sleep=sleep)
+        return run_headless(url, verifier, challenge, sleep=sleep)
 
-    target = authorize_url(url, challenge, redirect_uri(server), label)
+    target = authorize_url(url, challenge, redirect_uri(server))
     try:
         opened = webbrowser.open(target)
     except Exception:
         # The launcher itself failed, so the browser flow cannot finish here.
         server.server_close()
         print("The browser did not start. FlightPlan uses a code instead.")
-        return run_headless(url, verifier, challenge, label, sleep=sleep)
+        return run_headless(url, verifier, challenge, sleep=sleep)
 
     if not opened:
         # No browser started, but the listener is good. Wait for a browser on
@@ -372,7 +372,7 @@ def run_browser(url: str, verifier: str, challenge: str, label: str, sleep=time.
         print("Approve the login in your browser.")
 
     code = wait_for_code(server)
-    return store(exchange(url, code, verifier, replaces=stored_credential_id()), label)
+    return store(exchange(url, code, verifier, replaces=stored_credential_id()))
 
 
 # --------------------------------------------------------------------------- #
@@ -444,10 +444,9 @@ def main(argv: list[str] | None = None, *, sleep=time.sleep) -> int:
 
     url = resolve_url(args.url)
     verifier, challenge = pkce_pair()
-    label = device_label()
     flow = run_headless if args.headless else run_browser
     try:
-        code = flow(url, verifier, challenge, label, sleep=sleep)
+        code = flow(url, verifier, challenge, sleep=sleep)
     except LoginError as err:
         print(str(err))
         return 1
