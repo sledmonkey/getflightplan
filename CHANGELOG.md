@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- The README no longer names GitHub as the way to sign in. The service takes
+  more than one sign-in provider, and `login` is where an account starts.
 - `getflightplan login` no longer sends the machine hostname. It was the
   credential's label on the `/devices` page, and the one fact about your
   machine the client sent. The service now names the credential after the

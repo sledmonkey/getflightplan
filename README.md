@@ -29,8 +29,8 @@ knows. The command is safe to re-run.
 The first time on a machine, run `uvx getflightplan login` next — it
 connects your account and finishes the MCP setup.
 
-The hosted service is in beta; sign in with your GitHub account at
-[getflightplan.com](https://getflightplan.com). The package is on PyPI, so the
+The hosted service is in beta. The first sign-in during `login` creates your
+account; there is no separate signup. The package is on PyPI, so the
 command above is all you need. To pin a branch or commit instead, install from
 the source:
 `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
