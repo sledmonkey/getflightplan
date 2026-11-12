@@ -16,8 +16,7 @@ Two things worth being explicit about:
   like any other summary. Keep names out when the work does not need them.
 - **Your identity is not sent with your work.** The author name shown on
   intents is derived server-side from the API key. No intent call carries a
-  username, email, hostname, or machine identifier. The one exception is
-  login: the machine hostname goes out once, as the label for the credential.
+  username, email, hostname, or machine identifier, and neither does login.
   See [Logging in](#logging-in).
 
 ## What never leaves
@@ -67,15 +66,15 @@ hook and the CLI commands do not send it.
 
 ## Logging in
 
-`getflightplan login` sends one value about your machine: its hostname, as the
-label for the credential it is about to mint. It travels as the `label` field —
-in the query string of the approval page your browser opens, or in the body of
-`POST /auth/device/start` on the headless path. The service shows it on the
-`/devices` page so you can tell one credential from another and revoke the
-right one.
+`getflightplan login` sends nothing about your machine. The approval page gets
+a PKCE challenge and the local callback address. On the headless path,
+`POST /auth/device/start` gets the PKCE challenge only.
 
-A hostname can carry a name (`brads-macbook-pro.local`). Nothing else about the
-machine goes out, and the label is never attached to an intent.
+The service names the new credential itself, from the browser you approve it
+in: the browser, its operating system, and the date, such as
+`Chrome on macOS, 2026-11-05`. The `/devices` page shows that name so you can
+tell one credential from another and revoke the right one. The name is never
+attached to an intent.
 
 ## Finding and registering a repository
 

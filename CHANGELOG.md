@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-11
+
+### Changed
+- The README no longer names GitHub as the way to sign in. The service takes
+  more than one sign-in provider, and `login` is where an account starts.
+- `getflightplan login` no longer sends the machine hostname. It was the
+  credential's label on the `/devices` page, and the one fact about your
+  machine the client sent. The service now names the credential after the
+  browser that approves it. `docs/data-flow.md` no longer lists an
+  exception.
+
 ## [0.19.0] - 2026-10-30
 
 ### Changed
@@ -382,7 +393,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before PyPI, install with
   `uvx --from git+https://github.com/sledmonkey/getflightplan getflightplan install`.
 
-[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/sledmonkey/getflightplan/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/sledmonkey/getflightplan/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/sledmonkey/getflightplan/compare/v0.17.2...v0.19.0
 [0.17.2]: https://github.com/sledmonkey/getflightplan/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/sledmonkey/getflightplan/compare/v0.17.0...v0.17.1
